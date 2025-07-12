@@ -20,9 +20,12 @@ class UserStatus(str, Enum):
 class User(Document):
     id: str = Field(default_factory=lambda: str(ObjectId()), unique=True, description="Уникальный идентификатор пользователя")
     
-    name: str = Field(..., min_length=1, max_length=100, description="Имя пользователя")
-    surname: str = Field(..., min_length=1, max_length=100, description="Фамилия пользователя")
-    email: EmailStr = Field(..., unique=True, description="Email пользователя")
+    name: str = Field(..., min_length=1, max_length=100,
+                      description="Имя пользователя")
+    surname: str = Field(..., min_length=1, max_length=100,
+                         description="Фамилия пользователя")
+    tg_username: str = Field(..., min_length=2, max_length=33, pattern=r"^@[a-zA-Z0-9_]{1,50}$",
+            description="Имя пользователя Telegram, начинающееся с @")
     
     user_type: UserType = Field(..., description="Тип пользователя")
     status: UserStatus = Field(default=UserStatus.ACTIVE, description="Статус пользователя")
@@ -35,7 +38,7 @@ class User(Document):
         return self.status == UserStatus.ACTIVE
     
     def __str__(self):
-        return f"{self.full_name} ({self.email}) - {self.user_type.value.capitalize()} - {self.status.value.capitalize()}"
+        return f"{self.full_name} ({self.tg_username}) - {self.user_type.value.capitalize()} - {self.status.value.capitalize()}"
     
     @property
     def full_name(self) -> str:
@@ -44,4 +47,4 @@ class User(Document):
 
 async def add_user_to_db(user: User):
     await user.insert()
-    print(f"Пользователь добавлен в базу данных: {user.full_name}")
+    # print(f"Пользователь добавлен в базу данных: {str(user.full_name)}")
