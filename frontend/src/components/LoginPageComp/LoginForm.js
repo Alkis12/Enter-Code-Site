@@ -1,6 +1,7 @@
 import React from "react";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 const StyledForm = styled.form`
   display: flex;
@@ -53,20 +54,22 @@ const Button = styled.button`
 
 function LoginForm() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const handleSubmit = (e) => {
     e.preventDefault();
     alert("Вход выполнен (заглушка)");
+    navigate("/profile");
   };
 
   return (
     <FormWrapper>
       <StyledForm onSubmit={handleSubmit}>
-        <h1>{t("login.title")}</h1>
-        <Input type="text" placeholder={t("login.login")} required />
-        <Input type="password" placeholder={t("login.password")} required />
-        <Button type="submit">
+        <h1>{t("Login.title")}</h1>
+        <Input type="text" placeholder={t("Login.login")} required />
+        <Input type="password" placeholder={t("Login.password")} required />
+        <Button type="submit" onClick={handleSubmit}>
           {" "}
-          <h2>{t("login.title")}</h2>{" "}
+          <h2>{t("Login.title")}</h2>{" "}
         </Button>
       </StyledForm>
     </FormWrapper>

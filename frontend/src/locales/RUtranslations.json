@@ -3,5 +3,13 @@
     "title": "ВХОД",
     "login": "Вход",
     "password": "Пароль"
+  },
+
+  "Header": {
+    "title": "Header",
+    "news": "Новости",
+    "courses": "Мои курсы",
+    "schedule": "Мой расписание",
+    "profile": "Профиль"
   }
 }
