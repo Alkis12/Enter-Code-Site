@@ -1,5 +1,6 @@
 import React from "react";
 import styled from "styled-components";
+import { useTranslation } from "react-i18next";
 
 const StyledForm = styled.form`
   display: flex;
@@ -51,6 +52,7 @@ const Button = styled.button`
 `;
 
 function LoginForm() {
+  const { t } = useTranslation();
   const handleSubmit = (e) => {
     e.preventDefault();
     alert("Вход выполнен (заглушка)");
@@ -59,12 +61,12 @@ function LoginForm() {
   return (
     <FormWrapper>
       <StyledForm onSubmit={handleSubmit}>
-        <h1>ВХОД</h1>
-        <Input type="text" placeholder="Логин" required />
-        <Input type="password" placeholder="Пароль" required />
+        <h1>{t("login.title")}</h1>
+        <Input type="text" placeholder={t("login.login")} required />
+        <Input type="password" placeholder={t("login.password")} required />
         <Button type="submit">
           {" "}
-          <h2>ВОЙТИ</h2>{" "}
+          <h2>{t("login.title")}</h2>{" "}
         </Button>
       </StyledForm>
     </FormWrapper>
