@@ -3,5 +3,13 @@
     "title": "ULAZ",
     "login": "Ulaz",
     "password": "Password"
+  },
+
+  "Header": {
+    "title": "Header",
+    "news": "Novosti",
+    "courses": "Moji kursevi",
+    "schedule": "Moja raspored",
+    "profile": "Profil"
   }
 }

@@ -1,7 +1,15 @@
 {
-  "login": {
+  "Login": {
     "title": "LOGIN",
     "login": "Login",
     "password": "Password"
+  },
+
+  "Header": {
+    "title": "Header",
+    "news": "News",
+    "courses": "My courses",
+    "schedule": "My schedule",
+    "profile": "Profile"
   }
 }
