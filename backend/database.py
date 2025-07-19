@@ -1,25 +1,20 @@
-from motor.motor_asyncio import AsyncIOMotorClient
+import motor.motor_asyncio
 from beanie import init_beanie
 from models.user import User
+import logging
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
+logger = logging.getLogger("database")
+MONGODB_URL = os.getenv("MONGODB_URL")
 
 async def init_database():
-    """Инициализация подключения к базе данных"""
-    # Подключение к MongoDB
-    client = AsyncIOMotorClient("mongodb://localhost:27017")
-    await client.enter_code_site.command("ping")
-    print("Подключение к базе данных успешно установлено")
-
-    # Инициализация Beanie с нашими моделями
-    await init_beanie(
-        database=client.enter_code_site,
-        document_models=[User]
-    )
-    
-    print("База данных успешно инициализирована")
-
+    """Initialize the MongoDB database and Beanie ODM."""
+    client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
+    await init_beanie(database=client.get_default_database(), document_models=[User])
+    logger.info("Database initialized successfully")
 
 async def close_database():
-    """Закрытие подключения к базе данных"""
-    # Beanie автоматически управляет подключениями
-    print("Подключение к базе данных закрыто") 
+    # No explicit close needed for motor client in most cases
+    logger.info("Database connection closed (if applicable)") 
