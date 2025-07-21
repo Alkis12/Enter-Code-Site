@@ -7,34 +7,39 @@ from bson import ObjectId
 
 
 class UserType(str, Enum):
+    """Enumeration for user types."""
     STUDENT = "student"
     TEACHER = "teacher"
     ADMIN = "admin"
 
 
 class UserStatus(str, Enum):
+    """Enumeration for user status."""
     ACTIVE = "active"
     INACTIVE = "inactive"
 
 
 class User(Document):
-    id: str = Field(default_factory=lambda: str(ObjectId()), unique=True, description="Уникальный идентификатор пользователя")
+    """User document model for MongoDB."""
+    id: str = Field(default_factory=lambda: str(ObjectId()), unique=True, description="Unique user identifier")
     
-    name: str = Field(..., min_length=1, max_length=100,
-                      description="Имя пользователя")
-    surname: str = Field(..., min_length=1, max_length=100,
-                         description="Фамилия пользователя")
-    tg_username: str = Field(..., min_length=2, max_length=33, pattern=r"^@[a-zA-Z0-9_]{1,50}$",
-            description="Имя пользователя Telegram, начинающееся с @")
+    name: str = Field(..., min_length=1, max_length=100, description="User's first name")
+    surname: str = Field(..., min_length=1, max_length=100, description="User's last name")
+    tg_username: str = Field(..., min_length=2, max_length=33, pattern=r"^[a-zA-Z0-9_]{1,50}$", description="Telegram username without @")
     
-    user_type: UserType = Field(..., description="Тип пользователя")
-    status: UserStatus = Field(default=UserStatus.ACTIVE, description="Статус пользователя")
+    user_type: UserType = Field(..., description="Type of user")
+    status: UserStatus = Field(default=UserStatus.ACTIVE, description="User status")
     
-    phone: Optional[str] = Field(default=None, max_length=20, unique=True, description="Номер телефона")
-    avatar_url: Optional[str] = Field(default=None, description="URL аватара")
-    bio: Optional[str] = Field(default=None, max_length=500, description="Краткая биография")
+    phone: Optional[str] = Field(default=None, max_length=20, unique=True, description="Phone number")
+    avatar_url: Optional[str] = Field(default=None, description="Avatar URL")
+    bio: Optional[str] = Field(default=None, max_length=500, description="Short biography")
+    
+    access_token: Optional[str] = Field(default=None, description="User's access token")
+    refresh_token: Optional[str] = Field(default=None, description="Refresh token for access renewal")
+    password_hash: str = Field(..., description="User's password hash")
     
     def is_active(self) -> bool:
+        """Check if the user is active."""
         return self.status == UserStatus.ACTIVE
     
     def __str__(self):
@@ -42,9 +47,13 @@ class User(Document):
     
     @property
     def full_name(self) -> str:
+        """Return the user's full name."""
         return f"{self.name} {self.surname}"
-    
 
-async def add_user_to_db(user: User):
-    await user.insert()
-    # print(f"Пользователь добавлен в базу данных: {str(user.full_name)}")
+async def get_by_tg_username(tg_username: str):
+    """Get a user by their Telegram username."""
+    return await User.find_one(User.tg_username == tg_username)
+
+async def get_by_phone(self, phone: str):
+    """Get a user by their phone number."""
+    return await User.find_one(User.phone == phone)
