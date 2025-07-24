@@ -1,12 +1,13 @@
 import logging
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi import Body
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from contextlib import asynccontextmanager
 from database import init_database, close_database
 from models.user import User, get_by_tg_username, get_by_phone
 from requests_shemas import LoginRequest, RegisterRequest, RefreshRequest
-from auth_service import AuthService, oauth2_scheme
+from auth_service import AuthService
 import os
 from dotenv import load_dotenv
 
@@ -35,7 +36,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Enter Code Site", lifespan=lifespan)
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # или укажите адрес фронтенда
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/", summary="Main page", tags=["General"])
 def root():
