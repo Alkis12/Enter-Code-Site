@@ -3,6 +3,7 @@ import styled from "styled-components";
 import Header from "../components/Header/Header";
 import background from "../assets/LoginAssets/Background.jpg";
 import ProfileInfo from "../components/ProfilePageComp/ProfileInfo";
+import Achievments from "../components/ProfilePageComp/Achievments";
 
 const Image = styled.img`
   display: grid;
@@ -11,26 +12,37 @@ const Image = styled.img`
   padding: 0px;
   border-radius: 100%;
   grid-column-start: 1;
-  justify-self: center;
+  justify-self: left;
   align-self: center;
 `;
 
-const ProfilePageWrapper = styled.div`
+const MainInfoWrapper = styled.div`
   align-items: start;
-  margin: 10vh 0vh;
   width: 100vh;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 3fr;
+`;
+
+const AchievmentsWrapper = styled.div`
+  width: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: left;
+  margin: 0;
+  padding: 0;
 `;
 
 const ProfilePage = () => {
   return (
     <div>
       <Header />
-      <ProfilePageWrapper>
+      <MainInfoWrapper>
         <Image src={background} alt="background" />
         <ProfileInfo />
-      </ProfilePageWrapper>
+      </MainInfoWrapper>
+      <AchievmentsWrapper>
+        <Achievments />
+      </AchievmentsWrapper>
     </div>
   );
 };
