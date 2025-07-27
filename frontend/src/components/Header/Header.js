@@ -3,6 +3,8 @@ import styled from "styled-components";
 import logo from "../../assets/LoginAssets/logo.png";
 import GlobalStyle from "../../styles/GlobalStyle";
 import { NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import LanguageSwitchBtn from "./LanguageSwitchBtn";
 
 const MainHeader = styled.div`
   display: flex;
@@ -59,15 +61,19 @@ const StyledProfileLink = styled(NavLink)`
 `;
 
 const Header = () => {
+  const { t } = useTranslation();
   return (
     <div>
       <MainHeader>
         <img src={logo} alt="logo" width="100px" />
         <HeaderMenu>
-          <StyledLink to="/news">News</StyledLink>
-          <StyledLink to="/mycourses">My Courses</StyledLink>
-          <StyledLink to="/myschedule">My Schedule</StyledLink>
-          <StyledProfileLink to="/profile">Profile</StyledProfileLink>
+          <StyledLink to="/news">{t("Header.news")}</StyledLink>
+          <StyledLink to="/mycourses">{t("Header.courses")}</StyledLink>
+          <StyledLink to="/myschedule">{t("Header.schedule")}</StyledLink>
+          <StyledProfileLink to="/profile">
+            {t("Header.profile")}
+          </StyledProfileLink>
+          <LanguageSwitchBtn />
         </HeaderMenu>
       </MainHeader>
     </div>
