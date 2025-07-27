@@ -1,6 +1,7 @@
 import React from "react";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
+import GlobalStyle from "../../styles/GlobalStyle";
 
 const ProfileInfoWrapper = styled.div`
   display: flex;
@@ -8,6 +9,8 @@ const ProfileInfoWrapper = styled.div`
   align-items: left;
   margin: 0;
   padding: 0;
+  justify-self: left;
+  justify-content: left;
 `;
 
 const ProgressBarWrapper = styled.div`
@@ -34,29 +37,17 @@ const FlexRow = styled.div`
   margin-right: 3vh;
 `;
 
-const Heading1 = styled.h1`
-  font-size: 50px;
-  font-weight: bold;
-  margin-bottom: 16px;
-`;
-
-const Heading3 = styled.h3`
-  font-size: 24px;
-  font-weight: bold;
-  margin: 8px 0;
-`;
-
 const ProfileInfo = () => {
   const { t } = useTranslation();
   return (
     <ProfileInfoWrapper>
-      <Heading1>{t("Profile.name")}</Heading1>
-      <Heading3>{t("Profile.courses")}</Heading3>
+      <h1>{t("Profile.name")}</h1>
+      <h3>{t("Profile.courses")}</h3>
       <p>- CourseTitle</p>
       <ProgressBarWrapper>
         <Progress progress={50} />
       </ProgressBarWrapper>
-      <Heading3>{t("Profile.plan")}</Heading3>
+      <h3>{t("Profile.plan")}</h3>
       <FlexRow>
         <FlexRow>
           <p>{t("Profile.planstatus")}</p>
