@@ -40,7 +40,6 @@ i18n
     },
   });
 
-// Listen for the language change and update the lang tag of the <html> element
 i18n.on("languageChanged", (lng) => {
   if (lng === "rs") {
     document.documentElement.lang = "rs-latn";

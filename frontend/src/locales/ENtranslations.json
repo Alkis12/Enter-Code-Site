@@ -11,5 +11,14 @@
     "courses": "My courses",
     "schedule": "My schedule",
     "profile": "Profile"
+  },
+
+  "Profile": {
+    "title": "Profile",
+    "name": "Name Surname",
+    "courses": "Courses",
+    "plan": "Courses",
+    "planstatus": "Plan status",
+    "leftover": "Leftover"
   }
 }

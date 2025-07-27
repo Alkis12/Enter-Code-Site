@@ -11,5 +11,14 @@
     "courses": "Moji kursevi",
     "schedule": "Moja raspored",
     "profile": "Profil"
+  },
+
+  "Profile": {
+    "title": "Profil",
+    "name": "Ime Prezime",
+    "courses": "Kursevi",
+    "plan": "Plan",
+    "planstatus": "Status abonema",
+    "leftover": "Ostatak predavanja"
   }
 }
