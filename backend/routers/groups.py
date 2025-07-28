@@ -64,18 +64,23 @@ async def update_group(
 @router.post("/add_students_bulk", response_model=MessageResponse, summary="Массово добавить студентов в группу")
 async def add_students_to_group_bulk(
     group_id: str = Body(..., description="Идентификатор группы"),
-    students_data: AddStudentsToGroupRequest = Body(..., description="Список идентификаторов студентов"),
+    students_data: AddStudentsToGroupRequest = Body(..., description="Список Telegram username студентов"),
     access_token: str = Body(..., description="Токен доступа преподавателя")
 ):
+    from services.user_service import get_user_ids_by_tg_usernames
+    
     user = await get_current_user_with_role(access_token, UserType.TEACHER)
     group = await Group.get(group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Группа не найдена")
     
+    # Преобразуем tg_username в user_id
+    student_user_ids = await get_user_ids_by_tg_usernames(students_data.student_usernames)
+    
     added_count = 0
-    for student_id in students_data.student_ids:
-        if student_id not in group.students:
-            group.students.append(student_id)
+    for user_id in student_user_ids:
+        if user_id not in group.students:
+            group.students.append(user_id)
             added_count += 1
     
     await group.save()
@@ -90,6 +95,8 @@ async def add_student_to_group(
     student_tg: str = Body(..., description="Telegram username студента"),
     access_token: str = Body(..., description="Токен доступа преподавателя")
 ):
+    from services.user_service import get_user_id_by_tg_username
+    
     user = await get_current_user_with_role(access_token, UserType.TEACHER)
     group = await Group.get(group_id)
     student = await get_by_tg_username(student_tg)
@@ -98,9 +105,10 @@ async def add_student_to_group(
         raise HTTPException(status_code=404, detail="Группа не найдена")
     if not student:
         raise HTTPException(status_code=404, detail="Студент не найден")
-    
-    if str(student.id) not in group.students:
-        group.students.append(str(student.id))
+
+    student_user_id = str(student.id)
+    if student_user_id not in group.students:
+        group.students.append(student_user_id)
         await group.save()
         return MessageResponse(
             message=f"Студент {student_tg} успешно добавлен в группу {group.name}",
@@ -127,8 +135,9 @@ async def remove_student_from_group(
     if not student:
         raise HTTPException(status_code=404, detail="Студент не найден")
     
-    if str(student.id) in group.students:
-        group.students.remove(str(student.id))
+    student_user_id = str(student.id)
+    if student_user_id in group.students:
+        group.students.remove(student_user_id)
         await group.save()
         return MessageResponse(
             message=f"Студент {student_tg} успешно удален из группы {group.name}",
@@ -155,8 +164,9 @@ async def add_teacher_to_group(
     if not teacher:
         raise HTTPException(status_code=404, detail="Преподаватель не найден")
     
-    if str(teacher.id) not in group.teachers:
-        group.teachers.append(str(teacher.id))
+    teacher_user_id = str(teacher.id)
+    if teacher_user_id not in group.teachers:
+        group.teachers.append(teacher_user_id)
         await group.save()
         return MessageResponse(
             message=f"Преподаватель {teacher_tg} успешно добавлен в группу {group.name}",
@@ -183,8 +193,9 @@ async def remove_teacher_from_group(
     if not teacher:
         raise HTTPException(status_code=404, detail="Преподаватель не найден")
     
-    if str(teacher.id) in group.teachers:
-        group.teachers.remove(str(teacher.id))
+    teacher_user_id = str(teacher.id)
+    if teacher_user_id in group.teachers:
+        group.teachers.remove(teacher_user_id)
         await group.save()
         return MessageResponse(
             message=f"Преподаватель {teacher_tg} успешно удален из группы {group.name}",
@@ -201,36 +212,48 @@ async def group_info(
     group_id: str = Body(..., description="Идентификатор группы"),
     access_token: str = Body(..., description="Токен доступа пользователя")
 ):
+    from services.user_service import get_tg_usernames_by_user_ids
+    
     await get_current_user_with_role(access_token, UserType.STUDENT)
     group = await Group.get(group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Группа не найдена")
+    
+    # Преобразуем user_id в tg_username для ответа
+    student_usernames = await get_tg_usernames_by_user_ids(group.students)
+    teacher_usernames = await get_tg_usernames_by_user_ids(group.teachers)
     
     return GroupResponse(
         id=str(group.id),
         course_id=str(group.course_id),
         name=group.name,
         description=group.description,
-        students=[str(student_id) for student_id in group.students],
-        teachers=[str(teacher_id) for teacher_id in group.teachers]
+        students=student_usernames,
+        teachers=teacher_usernames
     )
 
 @router.post("/list", response_model=List[GroupResponse], summary="Список всех групп")
 async def groups_list(
     access_token: str = Body(..., description="Токен доступа пользователя")
 ):
+    from services.user_service import get_tg_usernames_by_user_ids
+    
     await get_current_user_with_role(access_token, UserType.STUDENT)
     groups = await Group.find_all().to_list()
     
     result = []
     for group in groups:
+        # Преобразуем user_id в tg_username для ответа
+        student_usernames = await get_tg_usernames_by_user_ids(group.students)
+        teacher_usernames = await get_tg_usernames_by_user_ids(group.teachers)
+        
         group_response = GroupResponse(
             id=str(group.id),
             course_id=str(group.course_id),
             name=group.name,
             description=group.description,
-            students=[str(student_id) for student_id in group.students],
-            teachers=[str(teacher_id) for teacher_id in group.teachers]
+            students=student_usernames,
+            teachers=teacher_usernames
         )
         result.append(group_response)
     

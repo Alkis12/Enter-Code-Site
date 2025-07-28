@@ -3,6 +3,7 @@ from models.user import User, UserType
 from schemas.requests import ExtendSubscriptionRequest
 from schemas.responses import MessageResponse, SubscriptionResponse
 from services.auth_service import get_current_user_with_role
+from services.user_service import get_by_tg_username
 
 router = APIRouter(prefix="/subscription", tags=["Абонементы"])
 
@@ -14,7 +15,7 @@ async def extend_subscription(
     # Только преподаватели и админы могут продлевать абонементы
     await get_current_user_with_role(access_token, UserType.TEACHER)
     
-    user = await User.get(subscription_data.user_id)
+    user = await get_by_tg_username(subscription_data.tg_username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
@@ -32,16 +33,16 @@ async def extend_subscription(
 
 @router.post("/info", response_model=SubscriptionResponse, summary="Получить информацию об абонементе")
 async def subscription_info(
-    user_id: str = Body(..., description="ID пользователя"),
+    tg_username: str = Body(..., description="Telegram username пользователя"),
     access_token: str = Body(..., description="Токен доступа")
 ):
     current_user = await get_current_user_with_role(access_token, UserType.STUDENT)
     
     # Студенты могут смотреть только свой абонемент, преподаватели и админы - любой
-    if current_user.user_type == UserType.STUDENT and str(current_user.id) != user_id:
+    if current_user.user_type == UserType.STUDENT and current_user.tg_username != tg_username:
         raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра чужого абонемента")
     
-    user = await User.get(user_id)
+    user = await get_by_tg_username(tg_username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
@@ -49,7 +50,7 @@ async def subscription_info(
         raise HTTPException(status_code=400, detail="Информация об абонементе доступна только для студентов")
     
     return SubscriptionResponse(
-        user_id=str(user.id),
+        tg_username=user.tg_username,
         subscription_status=user.subscription_status,
         lessons_remaining=user.lessons_remaining,
         has_valid_subscription=user.has_valid_subscription()
@@ -57,13 +58,13 @@ async def subscription_info(
 
 @router.post("/use-lesson", response_model=MessageResponse, summary="Использовать одно занятие")
 async def use_lesson(
-    user_id: str = Body(..., description="ID студента"),
+    tg_username: str = Body(..., description="Telegram username студента"),
     access_token: str = Body(..., description="Токен доступа преподавателя")
 ):
     # Только преподаватели и админы могут списывать занятия
     await get_current_user_with_role(access_token, UserType.TEACHER)
     
-    user = await User.get(user_id)
+    user = await get_by_tg_username(tg_username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
@@ -85,21 +86,21 @@ async def use_lesson(
 
 @router.post("/check-validity", response_model=dict, summary="Проверить действительность абонемента")
 async def check_subscription_validity(
-    user_id: str = Body(..., description="ID студента"),
+    tg_username: str = Body(..., description="Telegram username студента"),
     access_token: str = Body(..., description="Токен доступа")
 ):
     current_user = await get_current_user_with_role(access_token, UserType.STUDENT)
     
     # Студенты могут проверять только свой абонемент
-    if current_user.user_type == UserType.STUDENT and str(current_user.id) != user_id:
+    if current_user.user_type == UserType.STUDENT and current_user.tg_username != tg_username:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     
-    user = await User.get(user_id)
+    user = await get_by_tg_username(tg_username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
     return {
-        "user_id": user_id,
+        "tg_username": tg_username,
         "is_valid": user.has_valid_subscription(),
         "lessons_remaining": user.lessons_remaining,
         "status": user.subscription_status

@@ -5,7 +5,7 @@ from models.task import TaskStatus
 
 class UserResponse(BaseModel):
     """Схема ответа для пользователя без sensitive данных"""
-    id: str = Field(..., description="Уникальный идентификатор пользователя")
+    user_id: str = Field(..., description="Уникальный идентификатор пользователя")
     name: str = Field(..., description="Имя пользователя")
     surname: str = Field(..., description="Фамилия пользователя")
     tg_username: str = Field(..., description="Telegram username без символа @")
@@ -26,11 +26,20 @@ class UserResponse(BaseModel):
     def full_name(self) -> str:
         """Вернуть полное имя пользователя."""
         return f"{self.name} {self.surname}"
-
+    
 class TokenResponse(BaseModel):
-    """Схема ответа с токенами"""
+    """Схема ответа с токенами и user_id"""
     access_token: str = Field(..., description="JWT токен доступа для авторизации запросов")
     refresh_token: str = Field(..., description="Refresh токен для обновления токена доступа")
+    user_id: str = Field(..., description="Уникальный идентификатор пользователя")
+
+class RegisterResponse(BaseModel):
+    """Схема ответа для регистрации"""
+    message: str = Field(..., description="Сообщение об успешной регистрации")
+    success: bool = Field(..., description="Флаг успешности операции")
+    access_token: str = Field(..., description="JWT токен доступа для авторизации запросов")
+    refresh_token: str = Field(..., description="Refresh токен для обновления токена доступа")
+    user_id: str = Field(..., description="Уникальный идентификатор пользователя")
 
 class MessageResponse(BaseModel):
     """Схема ответа с сообщением"""
@@ -53,8 +62,8 @@ class GroupResponse(BaseModel):
     course_id: str = Field(..., description="Идентификатор курса, к которому относится группа")
     name: str = Field(..., description="Название группы")
     description: str = Field(..., description="Описание группы")
-    students: List[str] = Field(default_factory=list, description="Список идентификаторов студентов в группе")
-    teachers: List[str] = Field(default_factory=list, description="Список идентификаторов преподавателей в группе")
+    students: List[str] = Field(default_factory=list, description="Список Telegram username студентов в группе")
+    teachers: List[str] = Field(default_factory=list, description="Список Telegram username преподавателей в группе")
     total_students: Optional[int] = Field(default=None, description="Общее количество студентов в группе")
 
 class TopicResponse(BaseModel):
@@ -69,7 +78,7 @@ class TopicResponse(BaseModel):
 
 class TaskResultResponse(BaseModel):
     """Схема ответа для результата задачи"""
-    user_id: str = Field(..., description="Идентификатор пользователя")
+    tg_username: str = Field(..., description="Telegram username пользователя")
     score: float = Field(..., description="Оценка за задачу (от 0 до 100)")
     status: TaskStatus = Field(..., description="Статус выполнения задачи")
 
@@ -89,7 +98,7 @@ class ErrorResponse(BaseModel):
 
 class SubscriptionResponse(BaseModel):
     """Схема ответа с информацией об абонементе"""
-    user_id: str = Field(..., description="ID пользователя")
+    tg_username: str = Field(..., description="Telegram username пользователя")
     subscription_status: SubscriptionStatus = Field(..., description="Статус абонемента")
     lessons_remaining: int = Field(..., description="Количество оставшихся занятий")
     has_valid_subscription: bool = Field(..., description="Есть ли действующий абонемент")

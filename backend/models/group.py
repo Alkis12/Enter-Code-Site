@@ -4,12 +4,12 @@ from pydantic import Field
 
 class Group(Document):
     """
-    Группа: принадлежит курсу (course_id), содержит студентов и преподавателей (user_id).
+    Группа: принадлежит курсу (course_id), содержит студентов (user_id) и преподавателей (user_id).
     """
     course_id: str = Field(..., description="ID курса, к которому относится группа")
     name: str = Field(..., description="Название группы")
-    students: List[str] = Field(default_factory=list, description="Список ID студентов в группе")
-    teachers: List[str] = Field(default_factory=list, description="Список ID преподавателей в группе")
+    students: List[str] = Field(default_factory=list, description="Список user_id студентов в группе")
+    teachers: List[str] = Field(default_factory=list, description="Список user_id преподавателей в группе")
     description: str = Field(default="", description="Описание группы")
 
     async def get_total_students(self) -> int:

@@ -22,51 +22,93 @@ logger = logging.getLogger("auth")
 
 class AuthService:
     async def logout(self, access_token: str, refresh_token: str):
-        user = await self.get_current_user(access_token)
-        if not user or user.refresh_token != refresh_token:
-            raise HTTPException(status_code=401, detail="Неверные токены")
-        user.access_token = None
-        user.refresh_token = None
-        await user.save()
-        self.logger.info(f"User {user.tg_username} logged out successfully")
-        return True
+        try:
+            user = await self.get_current_user(access_token)
+            if not user or user.refresh_token != refresh_token:
+                raise HTTPException(status_code=401, detail="Неверные токены")
+            user.access_token = None
+            user.refresh_token = None
+            await user.save()
+            self.logger.info(f"User {user.tg_username} logged out successfully")
+            return True
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during logout: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при выходе из системы")
 
     async def update_user(self, access_token: str, data):
-        user = await self.get_current_user(access_token)
-        for field in ["full_name", "phone", "avatar_url", "bio"]:
-            if hasattr(data, field) and getattr(data, field) is not None:
-                setattr(user, field, getattr(data, field))
-        await user.save()
-        self.logger.info(f"User {user.tg_username} data updated successfully")
-        return user
+        try:
+            user = await self.get_current_user(access_token)
+            for field in ["full_name", "phone", "avatar_url", "bio"]:
+                if hasattr(data, field) and getattr(data, field) is not None:
+                    setattr(user, field, getattr(data, field))
+            await user.save()
+            self.logger.info(f"User {user.tg_username} data updated successfully")
+            return user
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during user update: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при обновлении данных пользователя")
 
     async def change_password(self, access_token: str, old_password: str, new_password: str):
-        user = await self.get_current_user(access_token)
-        if not self.verify_password(old_password, user.password_hash):
-            raise HTTPException(status_code=400, detail="Старый пароль неверен")
-        user.password_hash = self.get_password_hash(new_password)
-        await user.save()
-        self.logger.info(f"User {user.tg_username} password changed successfully")
-        return True
+        try:
+            user = await self.get_current_user(access_token)
+            if not self.verify_password(old_password, user.password_hash):
+                raise HTTPException(status_code=400, detail="Старый пароль неверен")
+            user.password_hash = self.get_password_hash(new_password)
+            await user.save()
+            self.logger.info(f"User {user.tg_username} password changed successfully")
+            return True
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during password change: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при изменении пароля")
 
     async def reset_password(self, tg_username: str, new_password: str, reset_code: str):
-        user = await User.find_one(User.tg_username == tg_username)
-        if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
-        user.password_hash = self.get_password_hash(new_password)
-        await user.save()
-        self.logger.info(f"User {tg_username} password reset successfully")
-        return True
+        try:
+            user = await User.find_one(User.tg_username == tg_username)
+            if not user:
+                raise HTTPException(status_code=404, detail="Пользователь не найден")
+            user.password_hash = self.get_password_hash(new_password)
+            await user.save()
+            self.logger.info(f"User {tg_username} password reset successfully")
+            return True
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during password reset for user {tg_username}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при сбросе пароля")
 
     async def get_user_info(self, access_token: str):
-        user = await self.get_current_user(access_token)
-        return user
+        try:
+            user = await self.get_current_user(access_token)
+            return user
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error getting user info: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при получении информации о пользователе")
 
     async def delete_account(self, access_token: str):
-        user = await self.get_current_user(access_token)
-        await user.delete()
-        self.logger.info(f"User {user.tg_username} account deleted successfully")
-        return True
+        try:
+            user = await self.get_current_user(access_token)
+            await user.delete()
+            self.logger.info(f"User {user.tg_username} account deleted successfully")
+            return True
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during account deletion: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при удалении аккаунта")
 
     def __init__(self, secret_key: str = SECRET_KEY, algorithm: str = ALGORITHM, access_token_expire_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES):
         self.secret_key = secret_key
@@ -96,136 +138,188 @@ class AuthService:
         return token
 
     async def authenticate_user(self, tg_username: str, password: str) -> Optional[User]:
-        self.logger.info(f"Authentication attempt for user: {tg_username}")
-        user = await User.find_one(User.tg_username == tg_username)
-        if not user:
-            self.logger.warning(f"User {tg_username} not found")
-            return None
-        if not self.verify_password(password, user.password_hash):
-            self.logger.warning(f"Invalid password for user: {tg_username}")
-            return None
-        self.logger.info(f"User {tg_username} authenticated successfully")
-        return user
+        try:
+            self.logger.info(f"Authentication attempt for user: {tg_username}")
+            user = await User.find_one(User.tg_username == tg_username)
+            if not user:
+                self.logger.warning(f"User {tg_username} not found")
+                return None
+            if not self.verify_password(password, user.password_hash):
+                self.logger.warning(f"Invalid password for user: {tg_username}")
+                return None
+            self.logger.info(f"User {tg_username} authenticated successfully")
+            return user
+        except Exception as e:
+            self.logger.error(f"Error during authentication for user {tg_username}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при аутентификации пользователя")
 
     async def register_user(self, register_data) -> User:
-        self.logger.info(f"Registering new user: {register_data.tg_username}")
-        if await User.find_one(User.tg_username == register_data.tg_username):
-            self.logger.warning(f"User with username {register_data.tg_username} already exists")
-            raise HTTPException(status_code=400, detail="Пользователь с таким Telegram username уже существует")
-        if register_data.phone and await User.find_one(User.phone == register_data.phone):
-            self.logger.warning(f"User with phone {register_data.phone} already exists")
-            raise HTTPException(status_code=400, detail="Пользователь с таким телефоном уже существует")
-        if register_data.password != register_data.password_repeat:
-            self.logger.warning("Password and password repeat do not match")
-            raise HTTPException(status_code=400, detail="Пароль и повтор пароля не совпадают")
-        password_hash = self.get_password_hash(register_data.password)
-        token_data = {"tg_username": register_data.tg_username}
-        access_token = self.create_access_token(token_data)
-        refresh_token = str(uuid.uuid4())
-        user = User(
-            name=register_data.name,
-            surname=register_data.surname,
-            tg_username=register_data.tg_username,
-            user_type=register_data.user_type,
-            phone=register_data.phone,
-            avatar_url=register_data.avatar_url,
-            bio=register_data.bio,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            password_hash=password_hash
-        )
-        await user.insert()
-        return user
+        try:
+            self.logger.info(f"Registering new user: {register_data.tg_username}")
+            if await User.find_one(User.tg_username == register_data.tg_username):
+                self.logger.warning(f"User with username {register_data.tg_username} already exists")
+                raise HTTPException(status_code=400, detail="Пользователь с таким Telegram username уже существует")
+            if register_data.phone and await User.find_one(User.phone == register_data.phone):
+                self.logger.warning(f"User with phone {register_data.phone} already exists")
+                raise HTTPException(status_code=400, detail="Пользователь с таким телефоном уже существует")
+            if register_data.password != register_data.password_repeat:
+                self.logger.warning("Password and password repeat do not match")
+                raise HTTPException(status_code=400, detail="Пароль и повтор пароля не совпадают")
+            password_hash = self.get_password_hash(register_data.password)
+            token_data = {"tg_username": register_data.tg_username}
+            access_token = self.create_access_token(token_data)
+            refresh_token = str(uuid.uuid4())
+            user = User(
+                name=register_data.name,
+                surname=register_data.surname,
+                tg_username=register_data.tg_username,
+                user_type=register_data.user_type,
+                phone=register_data.phone,
+                avatar_url=register_data.avatar_url,
+                bio=register_data.bio,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                password_hash=password_hash
+            )
+            await user.insert()
+            self.logger.info(f"User {register_data.tg_username} registered successfully")
+            return user
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during user registration for {register_data.tg_username}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при регистрации пользователя")
 
     async def get_current_user(self, token: str) -> User:
-        self.logger.debug("Verifying user token")
-        credentials_exception = HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Не удалось проверить учетные данные",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-        
-        # Специальная проверка для дебаг-токена "0000"
-        if token == "0000":
-            user = await User.find_one(User.tg_username == "debug_admin")
-            if user and user.user_type == UserType.ADMIN:
-                self.logger.debug("Used debug token 0000")
-                return user
-            else:
-                self.logger.warning("Debug admin not found")
-                raise credentials_exception
-        
-        # Дополнительные тестовые токены
-        test_tokens = {
-            "test_student": ("test_student", UserType.STUDENT),
-            "test_teacher": ("test_teacher", UserType.TEACHER),
-            "test_admin": ("test_admin", UserType.ADMIN)
-        }
-        
-        if token in test_tokens:
-            username, user_type = test_tokens[token]
-            user = await User.find_one(User.tg_username == username)
-            if user:
-                self.logger.debug(f"Used test token: {token}")
-                return user
-        
         try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-            tg_username: Optional[str] = payload.get("tg_username")
-            if tg_username is None:
-                self.logger.warning("Username is missing in token")
+            self.logger.debug("Verifying user token")
+            credentials_exception = HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Не удалось проверить учетные данные",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+            # Специальная проверка для дебаг-токена "0000"
+            if token == "0000":
+                user = await User.find_one(User.tg_username == "debug_admin")
+                if user and user.user_type == UserType.ADMIN:
+                    self.logger.debug("Used debug token 0000")
+                    return user
+                else:
+                    self.logger.warning("Debug admin not found")
+                    raise credentials_exception
+            
+            # Дополнительные тестовые токены
+            test_tokens = {
+                "test_student": ("test_student", UserType.STUDENT),
+                "test_teacher": ("test_teacher", UserType.TEACHER),
+                "test_admin": ("test_admin", UserType.ADMIN)
+            }
+            
+            if token in test_tokens:
+                username, user_type = test_tokens[token]
+                user = await User.find_one(User.tg_username == username)
+                if user:
+                    self.logger.debug(f"Used test token: {token}")
+                    return user
+            
+            try:
+                payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+                tg_username: Optional[str] = payload.get("tg_username")
+                if tg_username is None:
+                    self.logger.warning("Username is missing in token")
+                    raise credentials_exception
+            except JWTError:
+                self.logger.warning("JWT token decoding error")
                 raise credentials_exception
-        except JWTError:
-            self.logger.warning("JWT token decoding error")
-            raise credentials_exception
-        user = await User.find_one(User.tg_username == tg_username)
-        if user is None:
-            self.logger.warning(f"User {tg_username} not found by token")
-            raise credentials_exception
-        self.logger.debug(f"Token verified for user: {tg_username}")
-        return user
+            user = await User.find_one(User.tg_username == tg_username)
+            if user is None:
+                self.logger.warning(f"User {tg_username} not found by token")
+                raise credentials_exception
+            self.logger.debug(f"Token verified for user: {tg_username}")
+            return user
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during token verification: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Ошибка при проверке токена",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     async def refresh_tokens(self, refresh_token: str) -> dict:
-        user = await User.find_one(User.refresh_token == refresh_token)
-        if not user:
-            self.logger.warning(f"Refresh token not found: {refresh_token}")
-            raise HTTPException(status_code=401, detail="Неверный refresh token")
-        token_data = {"tg_username": user.tg_username}
-        access_token = self.create_access_token(token_data)
-        # new_refresh_token = str(uuid.uuid4())
-        # user.refresh_token = new_refresh_token
-        user.access_token = access_token
-        await user.save()
-        return {"access_token": access_token, "refresh_token": user.refresh_token}
+        try:
+            user = await User.find_one(User.refresh_token == refresh_token)
+            if not user:
+                self.logger.warning(f"Refresh token not found: {refresh_token}")
+                raise HTTPException(status_code=401, detail="Неверный refresh token")
+            token_data = {"tg_username": user.tg_username}
+            access_token = self.create_access_token(token_data)
+            # new_refresh_token = str(uuid.uuid4())
+            # user.refresh_token = new_refresh_token
+            user.access_token = access_token
+            await user.save()
+            self.logger.info(f"Tokens refreshed for user: {user.tg_username}")
+            return {"access_token": access_token, "refresh_token": user.refresh_token}
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during token refresh: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при обновлении токенов")
 
     async def login(self, login_data) -> tuple[str, str]:
         """Аутентификация пользователя и генерация токенов"""
-        self.logger.info(f"User login attempt: {login_data.tg_username}")
-        user = await self.authenticate_user(login_data.tg_username, login_data.password)
-        if not user:
-            raise HTTPException(status_code=401, detail="Неверный логин или пароль")
-        
-        # Генерируем новые токены
-        token_data = {"tg_username": user.tg_username}
-        access_token = self.create_access_token(token_data)
-        refresh_token = str(uuid.uuid4())
-        
-        # Обновляем токены пользователя
-        user.access_token = access_token
-        user.refresh_token = refresh_token
-        await user.save()
-        
-        self.logger.info(f"User {user.tg_username} logged in successfully")
-        return access_token, refresh_token
+        try:
+            self.logger.info(f"User login attempt: {login_data.tg_username}")
+            user = await self.authenticate_user(login_data.tg_username, login_data.password)
+            if not user:
+                raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+            
+            # Генерируем новые токены
+            token_data = {"tg_username": user.tg_username}
+            access_token = self.create_access_token(token_data)
+            refresh_token = str(uuid.uuid4())
+            
+            # Обновляем токены пользователя
+            user.access_token = access_token
+            user.refresh_token = refresh_token
+            await user.save()
+            
+            self.logger.info(f"User {user.tg_username} logged in successfully")
+            return access_token, refresh_token
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during login: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при входе в систему")
 
     async def register(self, register_data) -> User:
         """Регистрация нового пользователя"""
-        return await self.register_user(register_data)
+        try:
+            return await self.register_user(register_data)
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during registration: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при регистрации")
 
     async def refresh_access_token(self, refresh_data):
         """Обновление access токена по refresh токену"""
-        tokens = await self.refresh_tokens(refresh_data.refresh_token)
-        return tokens["access_token"]
+        try:
+            tokens = await self.refresh_tokens(refresh_data.refresh_token)
+            return tokens["access_token"]
+        except HTTPException:
+            # Re-raise HTTPExceptions without modification
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during access token refresh: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка при обновлении токена доступа")
 
     async def get_current_user_from_bearer(self, credentials: HTTPAuthorizationCredentials = Depends(http_bearer)) -> User:
         """Получение текущего пользователя из Bearer токена для Swagger UI"""
