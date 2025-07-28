@@ -14,29 +14,31 @@ router = APIRouter(prefix="/task", tags=["Задачи"])
 @router.post("/student_status", response_model=dict, summary="Получить статус ученика по задаче")
 async def get_student_task_status(
     task_id: str = Body(..., description="Идентификатор задачи"),
-    user_id: str = Body(..., description="Идентификатор пользователя"),
+    tg_username: str = Body(..., description="Telegram username пользователя"),
     access_token: str = Body(..., description="Токен доступа")
 ):
+    from services.user_service import get_user_id_by_tg_username
+    
     user = await get_current_user_with_role(access_token, UserType.STUDENT)
     task = await Task.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     
     # Проверка прав доступа
-    if str(user.id) != str(user_id) and user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
+    if user.tg_username != tg_username and user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
         raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра чужого статуса")
     
-    status = None
-    score = 0.0
-    for result in task.results:
-        if result.user_id == user_id:
-            status = result.status
-            score = result.score
-            break
+    # Получаем user_id по tg_username
+    user_id = await get_user_id_by_tg_username(tg_username)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    
+    status = await task.get_status_for_student(user_id)
+    score = await task.get_score_for_student(user_id)
     
     return {
         "task_id": task_id,
-        "user_id": user_id,
+        "tg_username": tg_username,
         "status": status,
         "score": score
     }
@@ -113,6 +115,8 @@ async def delete_task(topic_id: str = Body(...), task_id: str = Body(...), acces
 
 @router.post("/info", summary="Получить информацию о задаче (и статус ученика)")
 async def task_info(task_id: str = Body(...), tg_username: str = Body(default=None), access_token: str = Body(...)):
+    from services.user_service import get_user_id_by_tg_username
+    
     user = await get_current_user_with_role(access_token, UserType.STUDENT)  
     task = await Task.get(task_id)
     if not task:
@@ -127,7 +131,7 @@ async def task_info(task_id: str = Body(...), tg_username: str = Body(default=No
         student = await get_by_tg_username(tg_username)
         if not student:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
-        status = await task.get_status_for_student(student.id)
+        status = await task.get_status_for_student(str(student.id))
     return {
         "task": task.dict(),
         "status": status
@@ -144,9 +148,10 @@ async def submit_task_solution(
         raise HTTPException(status_code=404, detail="Задача не найдена")
     
     # Проверяем, есть ли уже результат для этого пользователя
+    user_id = str(user.id)
     existing_result = None
     for result in task.results:
-        if result.user_id == user.id:
+        if result.user_id == user_id:
             existing_result = result
             break
     
@@ -158,7 +163,7 @@ async def submit_task_solution(
         # Создаем новый результат
         from models.task import TaskResult
         new_result = TaskResult(
-            user_id=str(user.id),
+            user_id=user_id,
             status=TaskStatus.UNDER_REVIEW,
             score=0.0
         )
@@ -167,7 +172,7 @@ async def submit_task_solution(
     # Сохраняем решение в истории чата (можно расширить эту логику)
     solution_entry = {
         "type": "solution_submission",
-        "user_id": str(user.id),
+        "tg_username": user.tg_username,
         "solution": solution_data.solution,
         "attachments": solution_data.attachments,
         "timestamp": datetime.now().isoformat()

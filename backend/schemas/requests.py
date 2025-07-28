@@ -28,7 +28,7 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6)
 
 class UpdateUserRequest(BaseModel):
-    full_name: Optional[str] = None
+    tg_username: Optional[str] = Field(default=None, min_length=2, max_length=33, pattern=r"^[a-zA-Z0-9_]{1,50}$")
     phone: Optional[str] = Field(default=None, max_length=20)
     avatar_url: Optional[str] = None
     bio: Optional[str] = Field(default=None, max_length=500)
@@ -53,10 +53,10 @@ class UpdateGroupRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
 
 class AddStudentsToGroupRequest(BaseModel):
-    student_ids: List[str]
+    student_usernames: List[str] = Field(..., description="Список Telegram username студентов")
 
 class AddTeachersToGroupRequest(BaseModel):
-    teacher_ids: List[str]
+    teacher_usernames: List[str] = Field(..., description="Список Telegram username преподавателей")
 
 # Запросы для тем
 class CreateTopicRequest(BaseModel):
@@ -87,5 +87,5 @@ class SubmitTaskSolutionRequest(BaseModel):
 
 # Запросы для абонементов
 class ExtendSubscriptionRequest(BaseModel):
-    user_id: str = Field(..., description="ID пользователя для продления абонемента")
+    tg_username: str = Field(..., description="Telegram username пользователя для продления абонемента")
     lessons_count: int = Field(..., ge=1, description="Количество занятий для добавления")

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Body, Depends, HTTPException
 from schemas.requests import LoginRequest, RegisterRequest, RefreshRequest, ChangePasswordRequest, UpdateUserRequest
-from schemas.responses import UserResponse, TokenResponse, MessageResponse
+from schemas.responses import UserResponse, TokenResponse, RegisterResponse, MessageResponse
 from services.auth_service import get_auth_service, get_current_user_dependency, get_current_user_bearer_dependency
-from models.user import User, UserType
+from services.user_service import get_by_id
+from models.user import UserType
 from pydantic import BaseModel
 from typing import Optional
 import logging
@@ -10,7 +11,7 @@ import logging
 router = APIRouter(prefix="/auth", tags=["Аутентификация"])
 logger = logging.getLogger("auth")
 
-@router.post("/register", response_model=MessageResponse, summary="Регистрация нового пользователя")
+@router.post("/register", response_model=RegisterResponse, summary="Регистрация нового пользователя")
 async def register_user(
     register_data: RegisterRequest = Body(..., description="Данные для регистрации нового пользователя"),
     auth_service = Depends(get_auth_service),
@@ -18,9 +19,20 @@ async def register_user(
     logger.info(f"User registration: {register_data.tg_username}")
     try:
         user = await auth_service.register(register_data)
-        return MessageResponse(
+        
+        # Создаем токены для нового пользователя
+        login_data = LoginRequest(
+            tg_username=register_data.tg_username,
+            password=register_data.password
+        )
+        access_token, refresh_token = await auth_service.login(login_data)
+        
+        return RegisterResponse(
             message=f"Пользователь {user.tg_username} успешно зарегистрирован",
-            success=True
+            success=True,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=str(user.id)
         )
     except Exception as e:
         logger.error(f"User registration error: {e}")
@@ -33,12 +45,16 @@ async def login(
 ):
     access_token, refresh_token = await auth_service.login(login_data)
     
+    # Получаем пользователя для извлечения user_id
+    user = await auth_service.get_current_user(access_token)
+    
     return TokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token
+        refresh_token=refresh_token,
+        user_id=str(user.id)
     )
 
-@router.post("/me", summary="Информация о пользователе (по access_token)")
+@router.post("/me", response_model=UserResponse, summary="Информация о пользователе (по access_token)")
 async def user_info(
     access_token: str = Body(...),
     auth_service = Depends(get_auth_service)
@@ -46,7 +62,19 @@ async def user_info(
     logger.info(f"Getting user information")
     try:
         user = await auth_service.get_user_info(access_token)
-        return {"tg_username": user.tg_username, "id": str(user.id)}
+        return UserResponse(
+            user_id=str(user.id),
+            name=user.name,
+            surname=user.surname,
+            tg_username=user.tg_username,
+            user_type=user.user_type,
+            status=user.status,
+            phone=user.phone,
+            avatar_url=user.avatar_url,
+            bio=user.bio,
+            subscription_status=user.subscription_status if user.user_type == UserType.STUDENT else None,
+            lessons_remaining=user.lessons_remaining if user.user_type == UserType.STUDENT else None
+        )
     except Exception as e:
         logger.error(f"Error getting user information: {e}")
         raise HTTPException(status_code=401, detail=str(e))
@@ -93,14 +121,22 @@ async def update_user(
     logger.info("User data update")
     try:
         user = await auth_service.get_current_user(access_token)
-        if data.full_name is not None:
-            user.full_name = data.full_name
+        
+        # Проверяем уникальность tg_username если он изменяется
+        if data.tg_username is not None and data.tg_username != user.tg_username:
+            from services.user_service import get_by_tg_username
+            existing_user = await get_by_tg_username(data.tg_username)
+            if existing_user:
+                raise HTTPException(status_code=400, detail="Пользователь с таким tg_username уже существует")
+            user.tg_username = data.tg_username
+            
         if data.phone is not None:
             user.phone = data.phone
         if data.avatar_url is not None:
             user.avatar_url = data.avatar_url
         if data.bio is not None:
             user.bio = data.bio
+            
         await user.save()
         return MessageResponse(message="Данные пользователя успешно обновлены", success=True)
     except Exception as e:

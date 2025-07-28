@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Optional
 from beanie import Document
 from pydantic import Field
-from bson import ObjectId
+import uuid
 
 class UserType(str, Enum):
     """Перечисление типов пользователей."""
@@ -26,10 +26,7 @@ class SubscriptionStatus(str, Enum):
 
 class User(Document):
     """Модель пользователя для MongoDB.
-    user_id используется для связи с курсами и задачами.
     """
-    id: str = Field(default_factory=lambda: str(ObjectId()), unique=True, description="Уникальный идентификатор пользователя")
-    
     name: str = Field(..., min_length=1, max_length=100, description="Имя пользователя")
     surname: str = Field(..., min_length=1, max_length=100, description="Фамилия пользователя")
     tg_username: str = Field(..., min_length=2, max_length=33, pattern=r"^[a-zA-Z0-9_]{1,50}$", description="Telegram username без @")
@@ -87,3 +84,6 @@ class User(Document):
     def full_name(self) -> str:
         """Вернуть полное имя пользователя."""
         return f"{self.name} {self.surname}"
+    
+    class Settings:
+        name = "users"

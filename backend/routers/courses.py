@@ -116,8 +116,8 @@ async def course_result(course_id: str = Body(...), tg_username: str = Body(...)
     if user.tg_username != tg_username and user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
         raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра чужих результатов")
     
-    percent = await course.get_user_success_percent(student.id)
-    return {"course_id": str(course.id), "user_id": str(student.id), "percent": percent}
+    percent = await course.get_user_success_percent(student.tg_username)
+    return {"course_id": str(course.id), "tg_username": student.tg_username, "percent": percent}
 
 @router.post("/list", response_model=List[CourseResponse], summary="Список всех курсов")
 async def courses_list(
@@ -156,20 +156,7 @@ async def course_detail(id: int = Path(...), access_token: str = Body(...)):
     }
     return {"course_id": str(course.id), "details": details}
 
-@router.post("/{id}/enroll", summary="Записаться на курс")
-async def enroll_course(id: int = Path(...), user_id: int = Body(...), access_token: str = Body(...)):
-    user = await get_current_user_with_role(access_token, UserType.STUDENT)
-    course = await Course.get(id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    
-    # Пользователь может записать только себя, либо преподаватель/админ может записать любого
-    if str(user.id) != str(user_id) and user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
-        raise HTTPException(status_code=403, detail="Недостаточно прав для записи другого пользователя")
-    
-    # Проверяем, есть ли пользователь уже в курсе
-    if user_id in course.students:
-        return {"course_id": id, "enrolled": False, "msg": "Пользователь уже записан"}
-    course.students.append(user_id)
-    await course.save()
-    return {"course_id": id, "enrolled": True}
+# Примечание: этот метод устарел, так как теперь студенты записываются в группы, а не напрямую в курсы
+# @router.post("/{id}/enroll", summary="Записаться на курс")
+# async def enroll_course(id: int = Path(...), user_id: int = Body(...), access_token: str = Body(...)):
+#     # Этот функционал перенесен в группы

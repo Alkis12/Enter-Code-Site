@@ -10,7 +10,7 @@ router = APIRouter(prefix="/users", tags=["Пользователи"])
 def create_user_response(user: User) -> UserResponse:
     """Создать UserResponse с корректной информацией об абонементе."""
     user_data = {
-        "id": str(user.id),
+        "user_id": str(user.id),
         "name": user.name,
         "surname": user.surname,
         "tg_username": user.tg_username,

@@ -114,13 +114,13 @@ async def topic_result(
     if not student:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
-    percent = await topic.get_user_success_percent(student.id)
+    student_user_id = str(student.id)
+    percent = await topic.get_user_success_percent(student_user_id)
     total_tasks = await topic.get_total_tasks()
-    solved_tasks = await topic.get_user_solved_count(student.id)
+    solved_tasks = await topic.get_user_solved_count(student_user_id)
     
     return {
         "topic_id": topic_id,
-        "user_id": str(student.id),
         "tg_username": tg_username,
         "percent": percent,
         "solved_tasks": solved_tasks,

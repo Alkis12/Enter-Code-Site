@@ -1,4 +1,5 @@
 from typing import List
+import uuid
 from beanie import Document
 from pydantic import Field
 
@@ -6,7 +7,6 @@ class Topic(Document):
     """
     Тема: принадлежит курсу (course_id), содержит задачи (task_ids).
     """
-    course_id: str = Field(..., description="ID курса, к которому относится тема")
     name: str = Field(..., description="Название темы")
     description: str = Field(default="", description="Описание темы")
     resources: List[str] = Field(default_factory=list, description="Список ресурсов")
@@ -33,3 +33,5 @@ class Topic(Document):
             return 0.0
         solved = await self.get_user_solved_count(user_id)
         return solved / total * 100
+    class Settings:
+        name = "topics"
