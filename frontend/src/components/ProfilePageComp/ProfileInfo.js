@@ -7,7 +7,7 @@ const ProfileInfoWrapper = styled.div`
   display: flex;
   flex-direction: column;
   align-items: left;
-  margin: 0;
+  margin: 0 5vh;
   padding: 0;
   justify-self: left;
   justify-content: left;
@@ -33,7 +33,7 @@ const Progress = styled.div`
 
 const FlexRow = styled.div`
   display: flex;
-  gap: 16px; /* расстояние между текстами */
+  gap: 16px;
   margin-right: 3vh;
 `;
 

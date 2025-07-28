@@ -19,6 +19,12 @@
     "courses": "Courses",
     "plan": "Courses",
     "planstatus": "Plan status",
-    "leftover": "Leftover"
+    "leftover": "Leftover",
+    "achievements": "Achievements",
+    "settings": "Settings",
+    "phonenumber": "Phone number",
+    "tg": "Telegram nickname",
+    "save": "Save",
+    "logout": "Logout"
   }
 }

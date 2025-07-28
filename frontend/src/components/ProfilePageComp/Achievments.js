@@ -7,13 +7,13 @@ const AchievmentsWrapper = styled.div`
   display: flex;
   flex-direction: column;
   align-items: left;
-  margin: 0;
+  margin: 5vh 0 0 0;
   padding: 0;
   position: relative;
 `;
 
 const AchievmentsButton = styled.button`
-  width: 100vh;
+  width: 100%;
   height: 70px;
   display: flex;
   align-items: center;
@@ -59,7 +59,7 @@ const Achievments = () => {
 
   return (
     <AchievmentsWrapper>
-      <h1>Achievments</h1>
+      <h1>{t("Profile.achievements")}</h1>
       <AchievmentsButton onClick={() => setIsOpen((prev) => !prev)}>
         Course 1 achievments{" "}
       </AchievmentsButton>
