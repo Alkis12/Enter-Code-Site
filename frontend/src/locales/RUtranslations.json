@@ -1,0 +1,30 @@
+{
+  "login": {
+    "title": "ВХОД",
+    "login": "Вход",
+    "password": "Пароль"
+  },
+
+  "Header": {
+    "title": "Header",
+    "news": "Новости",
+    "courses": "Мои курсы",
+    "schedule": "Мой расписание",
+    "profile": "Профиль"
+  },
+
+  "Profile": {
+    "title": "Профиль",
+    "name": "Имя Фамилия",
+    "courses": "Курсы",
+    "plan": "План",
+    "planstatus": "Статус",
+    "leftover": "Остаток занятий",
+    "achievements": "Достижения",
+    "settings": "Настройки",
+    "phonenumber": "Номер телефона",
+    "tg": "Телеграм ник",
+    "save": "Сохранить",
+    "logout": "Выход"
+  }
+}
