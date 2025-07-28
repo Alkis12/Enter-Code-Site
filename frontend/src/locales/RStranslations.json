@@ -1,0 +1,30 @@
+{
+  "login": {
+    "title": "ULAZ",
+    "login": "Ulaz",
+    "password": "Password"
+  },
+
+  "Header": {
+    "title": "Header",
+    "news": "Novosti",
+    "courses": "Moji kursevi",
+    "schedule": "Moja raspored",
+    "profile": "Profil"
+  },
+
+  "Profile": {
+    "title": "Profil",
+    "name": "Ime Prezime",
+    "courses": "Kursevi",
+    "plan": "Plan",
+    "planstatus": "Status abonema",
+    "leftover": "Ostatak predavanja",
+    "achievements": "Osvojeno",
+    "settings": "Postavke",
+    "phonenumber": "Broj telefona",
+    "tg": "Telegram nickname",
+    "save": "Sacuvaj",
+    "logout": "Odjavi se"
+  }
+}
