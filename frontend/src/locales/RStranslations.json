@@ -19,6 +19,12 @@
     "courses": "Kursevi",
     "plan": "Plan",
     "planstatus": "Status abonema",
-    "leftover": "Ostatak predavanja"
+    "leftover": "Ostatak predavanja",
+    "achievements": "Osvojeno",
+    "settings": "Postavke",
+    "phonenumber": "Broj telefona",
+    "tg": "Telegram nickname",
+    "save": "Sacuvaj",
+    "logout": "Odjavi se"
   }
 }
