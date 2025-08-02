@@ -12,8 +12,13 @@ const GlobalStyle = createGlobalStyle`
 h1 {
     font-size: 50px;
     font-weight: 600;
-    margin: 0 0 30px 0;
+    margin-bottom: 16px;
 }    
+h3 {
+    font-size: 24px;
+    font-weight: bold;
+    margin: 8px 0;
+}
 `;
 
 export default GlobalStyle;
