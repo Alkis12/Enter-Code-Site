@@ -10,20 +10,14 @@ export async function login({ tg_username, password }) {
   localStorage.setItem("refresh_token", response.refresh_token);
   return response;
 }
-
-export async function register({ tg_username, password }) {
-  return api("/auth/register", {
-    method: "POST",
-    body: { tg_username, password },
-    auth: false,
-  });
-}
 export async function logout() {
   const access_token = localStorage.getItem("access_token");
   const refresh_token = localStorage.getItem("refresh_token");
-  return api("/auth/logout", {
+  await api("/auth/logout", {
     method: "POST",
     body: { access_token, refresh_token },
     auth: false,
   });
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("refresh_token");
 }
