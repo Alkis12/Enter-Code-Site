@@ -7,6 +7,46 @@ import Achievments from "../components/ProfilePageComp/Achievments";
 import Settings from "../components/ProfilePageComp/Settings";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { logout } from "../api/auth";
+
+const ProfilePage = () => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      console.error(err);
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  };
+
+  return (
+    <div>
+      <Header />
+      <ProfilePageWrapper>
+        <MainInfoWrapper>
+          <Image src={background} alt="background" />
+          <ProfileInfo />
+        </MainInfoWrapper>
+        <AchievmentsWrapper>
+          <Achievments />
+        </AchievmentsWrapper>
+        <Settings />
+        <ButtonWrapper>
+          <LogOutButton onClick={handleLogout}>
+            {t("Profile.logout")}
+          </LogOutButton>
+        </ButtonWrapper>
+      </ProfilePageWrapper>
+    </div>
+  );
+};
 
 const ProfilePageWrapper = styled.div`
   margin: 5vh;
@@ -63,34 +103,4 @@ const LogOutButton = styled.button`
     background-color: rgb(208, 105, 37);
   }
 `;
-
-const ProfilePage = () => {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  return (
-    <div>
-      <Header />
-      <ProfilePageWrapper>
-        <MainInfoWrapper>
-          <Image src={background} alt="background" />
-          <ProfileInfo />
-        </MainInfoWrapper>
-        <AchievmentsWrapper>
-          <Achievments />
-        </AchievmentsWrapper>
-        <Settings />
-        <ButtonWrapper>
-          <LogOutButton
-            onClick={() => {
-              navigate("/login", { replace: true });
-            }}
-          >
-            {t("Profile.logout")}
-          </LogOutButton>
-        </ButtonWrapper>
-      </ProfilePageWrapper>
-    </div>
-  );
-};
-
 export default ProfilePage;
