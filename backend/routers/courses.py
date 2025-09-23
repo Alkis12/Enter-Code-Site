@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Body, HTTPException, Path
-from typing import List
+from typing import List, Optional, Set
 from models.course import Course
 from models.topic import Topic
 from models.task import Task
 from models.user import UserType
 from models.group import Group
 from schemas.requests import CreateCourseRequest, UpdateCourseRequest
-from schemas.responses import CourseResponse, MessageResponse
+from schemas.responses import CourseResponse, MessageResponse, UserCoursesResponse
 from services.auth_service import get_current_user_with_role
 from services.user_service import get_by_tg_username
 
@@ -156,7 +156,41 @@ async def course_detail(id: int = Path(...), access_token: str = Body(...)):
     }
     return {"course_id": str(course.id), "details": details}
 
-# Примечание: этот метод устарел, так как теперь студенты записываются в группы, а не напрямую в курсы
-# @router.post("/{id}/enroll", summary="Записаться на курс")
-# async def enroll_course(id: int = Path(...), user_id: int = Body(...), access_token: str = Body(...)):
-#     # Этот функционал перенесен в группы
+
+@router.post("/my", response_model=UserCoursesResponse, summary="Получить курсы пользователя")
+async def get_user_courses(
+    user_id: Optional[str] = Body(None, description="Идентификатор пользователя. Если не указан, используется текущий пользователь"),
+    access_token: str = Body(..., description="Токен доступа пользователя")
+):
+    current_user = await get_current_user_with_role(access_token, UserType.STUDENT)
+    
+    target_user_id = user_id or str(current_user.id)
+    
+    if current_user.user_type == UserType.STUDENT and str(current_user.id) != target_user_id:
+        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра курсов другого пользователя")
+
+    groups = await Group.find(
+        {"$or": [
+            {"students": target_user_id},
+            {"teachers": target_user_id}
+        ]}
+    ).to_list()
+
+    course_ids = {group.course_id for group in groups}
+
+    courses = []
+    for course_id in course_ids:
+        course = await Course.get(course_id)
+        if course:
+            course_response = CourseResponse(
+                id=str(course.id),
+                name=course.name,
+                description=course.description,
+                group_ids=[str(gid) for gid in course.group_ids],
+                topic_ids=[str(tid) for tid in course.topic_ids],
+                total_tasks=await course.get_total_tasks(),
+                total_students=await course.get_total_students()
+            )
+            courses.append(course_response)
+    
+    return UserCoursesResponse(courses=courses, total=len(courses))
