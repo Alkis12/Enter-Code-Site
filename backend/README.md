@@ -112,6 +112,7 @@
 | POST | `/courses/update` | Обновить курс | Teacher+ |
 | POST | `/courses/info` | Информация о курсе | Student+ |
 | POST | `/courses/list` | Список курсов | Student+ |
+| POST | `/courses/my` | Курсы пользователя | Student+ |
 
 ### 👥 Группы (`/groups`)
 
@@ -126,6 +127,7 @@
 | POST | `/groups/remove_teacher` | Удалить преподавателя | Admin |
 | POST | `/groups/info` | Информация о группе | Student+ |
 | POST | `/groups/list` | Список групп | Student+ |
+| POST | `/groups/my` | Группы пользователя | Student+ |
 
 ### 📚 Темы (`/topics`)
 

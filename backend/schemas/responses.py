@@ -96,6 +96,16 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = Field(default=None, description="Дополнительная информация об ошибке")
     code: Optional[int] = Field(default=None, description="Код ошибки")
 
+class UserCoursesResponse(BaseModel):
+    """Схема ответа для курсов пользователя"""
+    courses: List[CourseResponse] = Field(..., description="Список курсов пользователя")
+    total: int = Field(..., description="Общее количество курсов пользователя")
+
+class UserGroupsResponse(BaseModel):
+    """Схема ответа для групп пользователя"""
+    groups: List[GroupResponse] = Field(..., description="Список групп пользователя")
+    total: int = Field(..., description="Общее количество групп пользователя")
+
 class SubscriptionResponse(BaseModel):
     """Схема ответа с информацией об абонементе"""
     tg_username: str = Field(..., description="Telegram username пользователя")
