@@ -1,7 +1,6 @@
-import React from "react";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
-import GlobalStyle from "../../styles/GlobalStyle";
+import { useNavigate } from "react-router-dom";
 
 const ProfileInfoWrapper = styled.div`
   display: flex;
@@ -36,12 +35,17 @@ const FlexRow = styled.div`
   gap: 16px;
   margin-right: 3vh;
 `;
-
-const ProfileInfo = () => {
+const ProfileInfo = ({ info }) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+
+  const fullName = `${info.name} ${info.surname}`;
+  const subscriotionStatus = info.subscription_status;
+  const lessonsRemaining = info.lessons_remaining;
+
   return (
     <ProfileInfoWrapper>
-      <h1>{t("Profile.name")}</h1>
+      <h1>{fullName}</h1>
       <h3>{t("Profile.courses")}</h3>
       <p>- CourseTitle</p>
       <ProgressBarWrapper>
@@ -51,11 +55,15 @@ const ProfileInfo = () => {
       <FlexRow>
         <FlexRow>
           <p>{t("Profile.planstatus")}</p>
-          <p style={{ color: "rgb(33, 154, 135)" }}>payed</p>
+          <p style={{ color: "rgb(33, 154, 135)" }}>
+            {subscriotionStatus ? subscriotionStatus : "-"}
+          </p>
         </FlexRow>
         <FlexRow>
           <p>{t("Profile.leftover")}</p>
-          <p style={{ color: "rgb(213, 166, 9)" }}>3</p>
+          <p style={{ color: "rgb(213, 166, 9)" }}>
+            {lessonsRemaining ? lessonsRemaining : "-"}
+          </p>
         </FlexRow>
       </FlexRow>
     </ProfileInfoWrapper>
