@@ -75,6 +75,8 @@ const ProfilePage = () => {
   if (error) return <div style={{ color: "red" }}>{error}</div>;
   if (!info) return <div>Not found</div>;
 
+  localStorage.setItem("info", JSON.stringify(info));
+
   const handleLogout = async () => {
     try {
       await logout();
