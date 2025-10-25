@@ -2,6 +2,82 @@ import React, { useState } from "react";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import { login } from "../../api/auth";
+
+function LoginForm() {
+  const [tgUsername, setTgUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      const { access_token, refresh_token } = await login({
+        tg_username: tgUsername,
+        password,
+      });
+      localStorage.setItem("access_token", access_token);
+      localStorage.setItem("refresh_token", refresh_token);
+      navigate("/profile");
+    } catch (err) {
+      setError(err.message || "Ошибка входа");
+    }
+  };
+  // const handleLogin = async (e) => {
+  //   e.preventDefault();
+  //   setError("");
+  //   try {
+  //     const response = await fetch("http://localhost:8000/login", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ tg_username: tgUsername, password }),
+  //     });
+  //     const data = await response.json();
+  //     if (response.ok) {
+  //       setToken(data.access_token);
+  //       alert("Token: " + data.access_token);
+  //       // localStorage.setItem("access_token", data.access_token);
+  //     } else {
+  //       // setError(data.detail || "Ошибка входа");
+  //       alert(data.detail || "Ошибка входа");
+  //     }
+  //   } catch (err) {
+  //     // setError("Ошибка сети");
+  //     alert(err.message);
+  //   }
+  // };
+
+  return (
+    <FormWrapper>
+      <StyledForm onSubmit={handleLogin}>
+        <h1>ВХОД</h1>
+        <Input
+          type="text"
+          placeholder="Логин"
+          value={tgUsername}
+          onChange={(e) => setTgUsername(e.target.value)}
+          required
+        />
+        <Input
+          type="password"
+          placeholder="Пароль"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <Button type="submit">
+          <h2>ВОЙТИ</h2>
+        </Button>
+        <br />
+        {/* {token && <div>Ваш токен: {token}</div>} */}
+        {error && <div style={{ color: "red" }}>{error}</div>}
+      </StyledForm>
+    </FormWrapper>
+  );
+}
 
 const StyledForm = styled.form`
   display: flex;
@@ -51,64 +127,4 @@ const Button = styled.button`
     background-color: rgb(208, 105, 37);
   }
 `;
-
-function LoginForm() {
-  const [tgUsername, setTgUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [error, setError] = useState("");
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError("");
-    try {
-      const response = await fetch("http://localhost:8000/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tg_username: tgUsername, password }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setToken(data.access_token);
-        alert("Token: " + data.access_token);
-        // localStorage.setItem("access_token", data.access_token);
-      } else {
-        // setError(data.detail || "Ошибка входа");
-        alert(data.detail || "Ошибка входа");
-      }
-    } catch (err) {
-      // setError("Ошибка сети");
-      alert(err.message);
-    }
-  };
-
-  return (
-    <FormWrapper>
-      <StyledForm onSubmit={handleLogin}>
-        <h1>ВХОД</h1>
-        <Input
-          type="text"
-          placeholder="Логин"
-          value={tgUsername}
-          onChange={(e) => setTgUsername(e.target.value)}
-          required
-        />
-        <Input
-          type="password"
-          placeholder="Пароль"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <Button type="submit">
-          <h2>ВОЙТИ</h2>
-        </Button>
-        <br/>
-        {/* {token && <div>Ваш токен: {token}</div>} */}
-        {error && <div style={{ color: "red" }}>{error}</div>}
-      </StyledForm>
-    </FormWrapper>
-  );
-}
-
 export default LoginForm;

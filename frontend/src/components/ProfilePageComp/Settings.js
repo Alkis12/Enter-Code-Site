@@ -1,7 +1,8 @@
-import React from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
-import GlobalStyle from "../../styles/GlobalStyle";
+import { getMyInfo } from "../../api/profile_info";
 
 const SettingsWrapper = styled.div`
   display: flex;
@@ -65,17 +66,54 @@ const ConfirmButton = styled.button`
 
 const Settings = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [info, setInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const data = await getMyInfo();
+        if (!alive) return;
+        setInfo(data);
+      } catch (err) {
+        if (String(err.message).includes("401")) {
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("refresh_token");
+          navigate("/login", { replace: true });
+          return;
+        }
+        setError(err.message || "Произошла ошибка");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [navigate]);
+
+  if (loading) return <div>Загрузка…</div>;
+  if (error) return <div style={{ color: "red" }}>{error}</div>;
+  if (!info) return null;
+
+  const phoneNumber = info.phone;
+  const tgUsername = info.tg_username;
+
   return (
     <SettingsWrapper>
       <h1>{t("Profile.settings")}</h1>
       <FlexRow>
         <FieldGroup>
           <Label>{t("Profile.phonenumber")}</Label>
-          <Input type="text" placeholder={t("Profile.phonenumber")} />
+          <Input type="text" placeholder={phoneNumber} />
         </FieldGroup>
         <FieldGroup>
           <Label>{t("Profile.tg")}</Label>
-          <Input type="text" placeholder={t("Profile.tg")} />
+          <Input type="text" placeholder={tgUsername} />
         </FieldGroup>
         <FieldGroup>
           <ConfirmButton
@@ -91,5 +129,4 @@ const Settings = () => {
     </SettingsWrapper>
   );
 };
-
 export default Settings;

@@ -7,6 +7,8 @@ import Achievments from "../components/ProfilePageComp/Achievments";
 import Settings from "../components/ProfilePageComp/Settings";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { logout } from "../api/auth";
+import { useMyInfo } from "../hooks/useMyInfo";
 
 const ProfilePageWrapper = styled.div`
   margin: 5vh;
@@ -63,28 +65,43 @@ const LogOutButton = styled.button`
     background-color: rgb(208, 105, 37);
   }
 `;
-
 const ProfilePage = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+
+  const { info, loading, error } = useMyInfo();
+
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div style={{ color: "red" }}>{error}</div>;
+  if (!info) return <div>Not found</div>;
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      console.error(err);
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  };
+
   return (
     <div>
       <Header />
       <ProfilePageWrapper>
         <MainInfoWrapper>
           <Image src={background} alt="background" />
-          <ProfileInfo />
+          <ProfileInfo info={info} />
         </MainInfoWrapper>
         <AchievmentsWrapper>
           <Achievments />
         </AchievmentsWrapper>
-        <Settings />
+        <Settings info={info} />
         <ButtonWrapper>
-          <LogOutButton
-            onClick={() => {
-              navigate("/login", { replace: true });
-            }}
-          >
+          <LogOutButton onClick={handleLogout}>
             {t("Profile.logout")}
           </LogOutButton>
         </ButtonWrapper>
@@ -92,5 +109,4 @@ const ProfilePage = () => {
     </div>
   );
 };
-
 export default ProfilePage;

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Body, HTTPException
-from typing import List
+from typing import List, Optional
 from models.group import Group
 from models.user import UserType
 from schemas.requests import CreateGroupRequest, UpdateGroupRequest, AddStudentsToGroupRequest, AddTeachersToGroupRequest
-from schemas.responses import GroupResponse, MessageResponse
+from schemas.responses import GroupResponse, MessageResponse, UserGroupsResponse
 from services.auth_service import get_current_user_with_role
 from services.user_service import get_by_tg_username
 
@@ -253,8 +253,51 @@ async def groups_list(
             name=group.name,
             description=group.description,
             students=student_usernames,
-            teachers=teacher_usernames
+            teachers=teacher_usernames,
+            total_students=await group.get_total_students()
         )
         result.append(group_response)
     
     return result
+
+@router.post("/my", response_model=UserGroupsResponse, summary="Получить группы пользователя")
+async def get_user_groups(
+    user_id: Optional[str] = Body(None, description="Идентификатор пользователя. Если не указан, используется текущий пользователь"),
+    access_token: str = Body(..., description="Токен доступа пользователя")
+):
+    from services.user_service import get_tg_usernames_by_user_ids
+    
+    current_user = await get_current_user_with_role(access_token, UserType.STUDENT)
+    
+    # Если user_id не указан, используем текущего пользователя
+    target_user_id = user_id or str(current_user.id)
+    
+    # Преподаватели и админы могут смотреть группы любого пользователя
+    if current_user.user_type == UserType.STUDENT and str(current_user.id) != target_user_id:
+        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра групп другого пользователя")
+
+    # Ищем все группы, где пользователь является студентом или преподавателем
+    groups = await Group.find(
+        {"$or": [
+            {"students": target_user_id},
+            {"teachers": target_user_id}
+        ]}
+    ).to_list()
+
+    result = []
+    for group in groups:
+        student_usernames = await get_tg_usernames_by_user_ids(group.students)
+        teacher_usernames = await get_tg_usernames_by_user_ids(group.teachers)
+        
+        group_response = GroupResponse(
+            id=str(group.id),
+            course_id=str(group.course_id),
+            name=group.name,
+            description=group.description,
+            students=student_usernames,
+            teachers=teacher_usernames,
+            total_students=await group.get_total_students()
+        )
+        result.append(group_response)
+    
+    return UserGroupsResponse(groups=result, total=len(result))
