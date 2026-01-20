@@ -10,8 +10,8 @@ export async function getMyInfo() {
   });
 }
 
-let _cache = null; // готовые данные
-let _inflight = null; // один общий промис на время запроса
+let _cache = null;
+let _inflight = null;
 
 export async function getMyInfoOnce({ force = false } = {}) {
   if (force) {
