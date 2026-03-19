@@ -1,6 +1,38 @@
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8002";
 
 const getToken = () => localStorage.getItem("access_token");
+
+function normalizeErrorMessage(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeErrorMessage(item))
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  if (typeof value === "object") {
+    if (typeof value.message === "string") {
+      return value.message;
+    }
+    if (typeof value.detail === "string") {
+      return value.detail;
+    }
+    if (typeof value.msg === "string") {
+      return value.msg;
+    }
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
 
 export async function api(
   path,
@@ -33,8 +65,14 @@ export async function api(
   }
 
   if (!res.ok) {
-    const msg = (data && (data.detail || data.message)) || res.statusText;
-    throw new Error(msg);
+    const msg =
+      normalizeErrorMessage(data?.detail ?? data?.message ?? data) ||
+      res.statusText;
+    const error = new Error(msg);
+    error.status = res.status;
+    error.data = data;
+    error.details = data?.detail ?? data;
+    throw error;
   }
   return data;
 }

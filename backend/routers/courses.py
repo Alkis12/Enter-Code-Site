@@ -1,196 +1,291 @@
-from fastapi import APIRouter, Body, HTTPException, Path
-from typing import List, Optional, Set
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
+
 from models.course import Course
-from models.topic import Topic
-from models.task import Task
-from models.user import UserType
+from models.course_request import CourseRequest
 from models.group import Group
-from schemas.requests import CreateCourseRequest, UpdateCourseRequest
-from schemas.responses import CourseResponse, MessageResponse, UserCoursesResponse
-from services.auth_service import get_current_user_with_role
-from services.user_service import get_by_tg_username
+from models.topic import Topic
+from models.user import User, UserType
+from schemas.requests import (
+    CreateCourseGroupRequest,
+    CreateCourseRequest,
+    CreateCourseRequestLeadRequest,
+    SetCourseMembersRequest,
+    UpdateCourseGroupRequest,
+    UpdateCourseRequest,
+)
+from schemas.responses import (
+    CourseDetailResponse,
+    CourseResponse,
+    GroupResponse,
+    MessageResponse,
+    PublicCourseDetailResponse,
+    UserCoursesResponse,
+)
+from services.auth_service import get_current_user_dependency, require_role
+from services.learning_service import can_edit_course, get_courses_for_user, get_groups_for_course
+from services.learning_service import get_course_students
+from services.serializer_service import (
+    build_leaderboard,
+    serialize_course,
+    serialize_course_member,
+    serialize_group,
+    serialize_topic,
+)
 
-router = APIRouter(prefix="/course", tags=["Курсы"])
 
-@router.post("/add", response_model=MessageResponse, summary="Добавить новый курс")
-async def add_course(
-    course_data: CreateCourseRequest = Body(..., description="Данные для создания нового курса"),
-    access_token: str = Body(..., description="Токен доступа преподавателя")
-):
-    user = await get_current_user_with_role(access_token, UserType.TEACHER)
-    course = Course(name=course_data.name, description=course_data.description)
-    await course.insert()
-    return MessageResponse(
-        message=f"Курс '{course.name}' успешно создан с ID: {str(course.id)}",
-        success=True
-    )
+def lesson_is_available(topic: Topic, ordered_topics: list[Topic]) -> bool:
+    if topic.is_open:
+        return True
+    if not ordered_topics:
+        return True
+    return str(ordered_topics[0].id) == str(topic.id)
 
-@router.post("/update", response_model=MessageResponse, summary="Обновить курс")
-async def update_course(
-    course_id: str = Body(..., description="Идентификатор курса для обновления"),
-    course_data: UpdateCourseRequest = Body(..., description="Данные для обновления курса"),
-    access_token: str = Body(..., description="Токен доступа преподавателя")
-):
-    user = await get_current_user_with_role(access_token, UserType.TEACHER)
+
+router = APIRouter(prefix="/course", tags=["РљСѓСЂСЃС‹"])
+
+
+@router.get("/my", response_model=UserCoursesResponse)
+async def my_courses(user: User = Depends(get_current_user_dependency)):
+    courses = await get_courses_for_user(user)
+    serialized = [await serialize_course(course, user) for course in courses]
+    return UserCoursesResponse(courses=serialized, total=len(serialized))
+
+
+@router.get("/list", response_model=List[CourseResponse])
+async def courses_list(user: User = Depends(get_current_user_dependency)):
+    courses = await get_courses_for_user(user)
+    return [await serialize_course(course, user) for course in courses]
+
+
+@router.get("/public/{course_id}", response_model=PublicCourseDetailResponse)
+async def public_course_detail(course_id: str):
     course = await Course.get(course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    
-    if course_data.name is not None:
-        course.name = course_data.name
-    if course_data.description is not None:
-        course.description = course_data.description
-    
-    await course.save()
-    return MessageResponse(
-        message=f"Курс '{course.name}' успешно обновлен",
-        success=True
-    )
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    return PublicCourseDetailResponse(course=await serialize_course(course, None))
 
-@router.post("/info", response_model=dict, summary="Получить информацию о курсе")
-async def course_info(
-    course_id: str = Body(..., description="Идентификатор курса"),
-    access_token: str = Body(..., description="Токен доступа пользователя")
+
+@router.get("/{course_id}", response_model=CourseDetailResponse)
+async def course_detail(
+    course_id: str,
+    user: User = Depends(get_current_user_dependency),
 ):
-    user = await get_current_user_with_role(access_token, UserType.STUDENT)
     course = await Course.get(course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    
-    topics = []
-    for topic_id in course.topic_ids:
-        topic = await Topic.get(topic_id)
-        if topic:
-            topics.append({"topic_id": str(topic.id), "name": topic.name})
-    
-    groups = []
-    for group_id in course.group_ids:
-        group = await Group.get(group_id)
-        if group:
-            groups.append({"group_id": str(group.id), "name": group.name})
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
 
-    return {
-        "course_id": str(course.id),
-        "name": course.name,
-        "description": course.description,
-        "topics": topics,
-        "groups": groups
-    }
+    user_courses = {str(item.id) for item in await get_courses_for_user(user)}
+    if user.user_type != UserType.ADMIN and course_id not in user_courses:
+        raise HTTPException(status_code=403, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє РєСѓСЂСЃСѓ")
 
-@router.post("/tree", summary="Вывести дерево курса")
-async def course_tree(course_id: str = Body(...), access_token: str = Body(...)):
-    user = await get_current_user_with_role(access_token, UserType.STUDENT)
-    course = await Course.get(course_id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    tree = {"course_id": str(course.id), "name": course.name, "topics": []}
-    for topic_id in course.topic_ids:
-        topic = await Topic.get(topic_id)
-        if topic:
-            topic_info = {"topic_id": str(topic.id), "name": topic.name, "tasks": []}
-            for task_id in topic.task_ids:
-                task = await Task.get(task_id)
-                if task:
-                    topic_info["tasks"].append({"task_id": str(task.id), "name": task.condition})
-            tree["topics"].append(topic_info)
-    groups = []
-    for group_id in course.group_ids:
-        group = await Group.get(group_id)
-        if group:
-            groups.append({"group_id": str(group.id), "name": group.name})
-    tree["groups"] = groups
-    return tree
-
-@router.post("/result", summary="Получить процент решённых задач по курсу для ученика")
-async def course_result(course_id: str = Body(...), tg_username: str = Body(...), access_token: str = Body(...)):
-    user = await get_current_user_with_role(access_token, UserType.STUDENT)
-    course = await Course.get(course_id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    student = await get_by_tg_username(tg_username)
-    if not student:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
-    # Проверка прав доступа: пользователь может смотреть только свои результаты, 
-    # либо преподаватель/админ может смотреть результаты учеников
-    if user.tg_username != tg_username and user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
-        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра чужих результатов")
-    
-    percent = await course.get_user_success_percent(student.tg_username)
-    return {"course_id": str(course.id), "tg_username": student.tg_username, "percent": percent}
-
-@router.post("/list", response_model=List[CourseResponse], summary="Список всех курсов")
-async def courses_list(
-    access_token: str = Body(..., description="Токен доступа пользователя")
-):
-    await get_current_user_with_role(access_token, UserType.STUDENT)
-    courses = await Course.find_all().to_list()
-    
-    result = []
-    for course in courses:
-        course_response = CourseResponse(
-            id=str(course.id),
-            name=course.name,
-            description=course.description,
-            group_ids=[str(gid) for gid in course.group_ids],
-            topic_ids=[str(tid) for tid in course.topic_ids],
-            total_tasks=await course.get_total_tasks(),
-            total_students=await course.get_total_students()
-        )
-        result.append(course_response)
-    
-    return result
-
-@router.post("/{id}", summary="Детали курса")
-async def course_detail(id: int = Path(...), access_token: str = Body(...)):
-    await get_current_user_with_role(access_token, UserType.STUDENT)
-    course = await Course.get(id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    details = {
-        "id": str(course.id),
-        "name": course.name,
-        "description": course.description,
-        "group_ids": [str(gid) for gid in course.group_ids],
-        "topic_ids": [str(tid) for tid in course.topic_ids]
-    }
-    return {"course_id": str(course.id), "details": details}
-
-
-@router.post("/my", response_model=UserCoursesResponse, summary="Получить курсы пользователя")
-async def get_user_courses(
-    user_id: Optional[str] = Body(None, description="Идентификатор пользователя. Если не указан, используется текущий пользователь"),
-    access_token: str = Body(..., description="Токен доступа пользователя")
-):
-    current_user = await get_current_user_with_role(access_token, UserType.STUDENT)
-    
-    target_user_id = user_id or str(current_user.id)
-    
-    if current_user.user_type == UserType.STUDENT and str(current_user.id) != target_user_id:
-        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра курсов другого пользователя")
-
-    groups = await Group.find(
-        {"$or": [
-            {"students": target_user_id},
-            {"teachers": target_user_id}
-        ]}
-    ).to_list()
-
-    course_ids = {group.course_id for group in groups}
-
-    courses = []
-    for course_id in course_ids:
-        course = await Course.get(course_id)
-        if course:
-            course_response = CourseResponse(
-                id=str(course.id),
-                name=course.name,
-                description=course.description,
-                group_ids=[str(gid) for gid in course.group_ids],
-                topic_ids=[str(tid) for tid in course.topic_ids],
-                total_tasks=await course.get_total_tasks(),
-                total_students=await course.get_total_students()
+    editable = await can_edit_course(user, course)
+    topics = await Topic.find(Topic.course_id == course_id).to_list()
+    topics.sort(key=lambda item: item.order)
+    groups = await get_groups_for_course(course)
+    course_students = []
+    if editable:
+        for student_id in await get_course_students(course):
+            student = await User.get(student_id)
+            if student and student.user_type == UserType.STUDENT:
+                course_students.append(serialize_course_member(student))
+        course_students.sort(key=lambda item: (item.surname.lower(), item.name.lower(), item.tg_username.lower()))
+    return CourseDetailResponse(
+        course=await serialize_course(course, user),
+        groups=[serialize_group(group) for group in groups],
+        students=course_students,
+        lessons=[
+            await serialize_topic(
+                topic,
+                user,
+                can_edit=editable,
+                can_access=editable or lesson_is_available(topic, topics),
             )
-            courses.append(course_response)
-    
-    return UserCoursesResponse(courses=courses, total=len(courses))
+            for topic in topics
+        ],
+        leaderboard=await build_leaderboard(course),
+    )
+
+
+@router.post("/add", response_model=MessageResponse)
+async def add_course(
+    payload: CreateCourseRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    teacher_ids = list(set(payload.teacher_ids + [str(user.id)]))
+    course = Course(
+        name=payload.name,
+        description=payload.description,
+        public_info=payload.public_info,
+        accent_color=payload.accent_color,
+        cover_image=payload.cover_image,
+        schedule_weekdays=payload.schedule_weekdays,
+        schedule_start_time=payload.schedule_start_time,
+        schedule_end_time=payload.schedule_end_time,
+        teacher_ids=teacher_ids,
+        student_ids=payload.student_ids,
+    )
+    await course.insert()
+    return MessageResponse(message=f"РљСѓСЂСЃ '{course.name}' СЃРѕР·РґР°РЅ", success=True)
+
+
+@router.put("/{course_id}", response_model=MessageResponse)
+async def update_course(
+    course_id: str,
+    payload: UpdateCourseRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    if not await can_edit_course(user, course):
+        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ РєСѓСЂСЃР°")
+
+    for field in [
+        "name",
+        "description",
+        "public_info",
+        "accent_color",
+        "cover_image",
+        "schedule_weekdays",
+        "schedule_start_time",
+        "schedule_end_time",
+    ]:
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(course, field, value)
+    course.touch()
+    await course.save()
+    return MessageResponse(message="РљСѓСЂСЃ РѕР±РЅРѕРІР»РµРЅ", success=True)
+
+
+@router.put("/{course_id}/members", response_model=MessageResponse)
+async def set_course_members(
+    course_id: str,
+    payload: SetCourseMembersRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    if not await can_edit_course(user, course):
+        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ РєСѓСЂСЃР°")
+
+    course.student_ids = payload.student_ids
+    course.teacher_ids = list(set(payload.teacher_ids + [str(user.id)]))
+    course.touch()
+    await course.save()
+    return MessageResponse(message="РЎРѕСЃС‚Р°РІ РєСѓСЂСЃР° РѕР±РЅРѕРІР»РµРЅ", success=True)
+
+
+@router.post("/{course_id}/groups", response_model=GroupResponse)
+async def create_course_group(
+    course_id: str,
+    payload: CreateCourseGroupRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    if not await can_edit_course(user, course):
+        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ РєСѓСЂСЃР°")
+
+    group = Group(
+        course_id=course_id,
+        name=payload.name or "Новая группа",
+        teachers=list(set(course.teacher_ids + [str(user.id)])),
+        students=payload.student_ids,
+        schedule_slots=payload.schedule_slots,
+    )
+    await group.insert()
+
+    if str(group.id) not in course.group_ids:
+        course.group_ids.append(str(group.id))
+        course.touch()
+        await course.save()
+
+    return serialize_group(group)
+
+
+@router.put("/{course_id}/groups/{group_id}", response_model=GroupResponse)
+async def update_course_group(
+    course_id: str,
+    group_id: str,
+    payload: UpdateCourseGroupRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    if not await can_edit_course(user, course):
+        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ РєСѓСЂСЃР°")
+
+    group = await Group.get(group_id)
+    if not group or group.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Р“СЂСѓРїРїР° РЅРµ РЅР°Р№РґРµРЅР°")
+
+    if payload.name is not None:
+        group.name = payload.name
+    if payload.schedule_slots is not None:
+        group.schedule_slots = payload.schedule_slots
+    if payload.student_ids is not None:
+        course_groups = await get_groups_for_course(course)
+        normalized_student_ids = list(dict.fromkeys(payload.student_ids))
+        for course_group in course_groups:
+            if str(course_group.id) == str(group.id):
+                course_group.students = normalized_student_ids
+            else:
+                course_group.students = [
+                    student_id
+                    for student_id in course_group.students
+                    if student_id not in normalized_student_ids
+                ]
+            await course_group.save()
+        group = await Group.get(group_id)
+    group.teachers = list(set(group.teachers + course.teacher_ids + [str(user.id)]))
+    await group.save()
+    return serialize_group(group)
+
+
+@router.delete("/{course_id}/groups/{group_id}", response_model=MessageResponse)
+async def delete_course_group(
+    course_id: str,
+    group_id: str,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+    if not await can_edit_course(user, course):
+        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ РєСѓСЂСЃР°")
+
+    group = await Group.get(group_id)
+    if not group or group.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Р“СЂСѓРїРїР° РЅРµ РЅР°Р№РґРµРЅР°")
+
+    course.group_ids = [item for item in course.group_ids if item != group_id]
+    course.touch()
+    await course.save()
+    await group.delete()
+    return MessageResponse(message="Р“СЂСѓРїРїР° СѓРґР°Р»РµРЅР°", success=True)
+
+
+@router.post("/{course_id}/request", response_model=MessageResponse)
+async def create_course_request(course_id: str, payload: CreateCourseRequestLeadRequest):
+    course = await Course.get(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+
+    request = CourseRequest(
+        course_id=course_id,
+        course_name=course.name,
+        contact_name=payload.contact_name,
+        contact_value=payload.contact_value,
+        comment=payload.comment,
+    )
+    await request.insert()
+    return MessageResponse(
+        message="Р—Р°СЏРІРєР° РѕС‚РїСЂР°РІР»РµРЅР°. РњС‹ СЃРІСЏР¶РµРјСЃСЏ СЃ РІР°РјРё.",
+        success=True,
+    )
