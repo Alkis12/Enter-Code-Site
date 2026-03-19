@@ -15,6 +15,7 @@ from routers.auth import router as auth_router
 from routers.courses import router as courses_router
 from routers.events import router as events_router
 from routers.groups import router as groups_router
+from routers.news import router as news_router
 from routers.subscriptions import router as subscriptions_router
 from routers.tasks import router as tasks_router
 from routers.teaching import router as teaching_router
@@ -30,6 +31,15 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 logger = logging.getLogger("main")
+
+
+def parse_allowed_origins(value: str | None) -> list[str]:
+    origins = []
+    for origin in (value or "").split(","):
+        normalized = origin.strip().rstrip("/")
+        if normalized:
+            origins.append(normalized)
+    return origins
 
 
 @asynccontextmanager
@@ -52,9 +62,16 @@ uploads_dir = os.getenv("UPLOADS_DIR", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+allowed_origins = parse_allowed_origins(
+    os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001",
+    )
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3001").split(","),
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +109,7 @@ app.include_router(teaching_router)
 app.include_router(groups_router)
 app.include_router(subscriptions_router)
 app.include_router(events_router)
+app.include_router(news_router)
 app.include_router(achievements_router)
 
 

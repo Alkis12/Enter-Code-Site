@@ -1,27 +1,22 @@
 import React, { useState } from "react";
 import styled from "styled-components";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import logo from "../../assets/LoginAssets/logo.png";
-import { getCurrentUserType, isAuthenticated, logout } from "../../api/auth";
+import { getCurrentUserType, isAuthenticated } from "../../api/auth";
 
 function Header() {
-  const navigate = useNavigate();
   const { i18n } = useTranslation();
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
+  const canOpenLearning = authed && ["student", "teacher", "admin"].includes(userType);
   const canManageStudents = userType === "teacher" || userType === "admin";
   const canManageAchievements = userType === "teacher" || userType === "admin";
   const canManageTeaching = userType === "teacher" || userType === "admin";
   const showManagementPanel = canManageStudents || canManageAchievements || canManageTeaching;
   const currentLanguage = i18n.language?.startsWith("en") ? "en" : "ru";
   const [showMenu, setShowMenu] = useState(false);
-
-  const handleLogout = async () => {
-    await logout();
-    navigate("/login", { replace: true });
-  };
 
   return (
     <Bar>
@@ -32,13 +27,8 @@ function Header() {
 
         <Nav>
           <NavItem to="/news">Новости</NavItem>
-          <NavItem to="/myschedule">Мое расписание</NavItem>
-          {authed && <NavItem to="/mycourses">Мои курсы</NavItem>}
-          {authed ? (
-            <ProfileItem to="/profile">Мой профиль</ProfileItem>
-          ) : (
-            <ProfileItem to="/login">Войти</ProfileItem>
-          )}
+          {canOpenLearning && <NavItem to="/myschedule">Мое расписание</NavItem>}
+          {canOpenLearning && <NavItem to="/mycourses">Мои курсы</NavItem>}
         </Nav>
 
         <RightSide>
@@ -98,7 +88,11 @@ function Header() {
               EN
             </LangButton>
           </LangSwitcher>
-          {authed && <LogoutButton onClick={handleLogout}>Выход</LogoutButton>}
+          {authed ? (
+            <ProfileItem to="/profile">Мой профиль</ProfileItem>
+          ) : (
+            <ProfileItem to="/login">Войти</ProfileItem>
+          )}
         </RightSide>
       </Inner>
     </Bar>
@@ -265,15 +259,5 @@ const LangButton = styled.button`
   color: ${(props) => (props.$active ? "#fffaf5" : "#ff7f2a")};
   text-align: center;
   font-weight: 800;
-  cursor: pointer;
-`;
-
-const LogoutButton = styled.button`
-  border: none;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fffaf5;
-  padding: 10px 14px;
-  font-weight: 700;
   cursor: pointer;
 `;

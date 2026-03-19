@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from models.achievement import AchievementTrigger
 from models.event import EventTag, ScheduleType
 from models.group import GroupScheduleSlot
+from models.student_course_enrollment import PaymentMode
 from models.user import UserType
 
 
@@ -150,6 +151,11 @@ class SubmitTaskSolutionRequest(BaseModel):
     code: str = Field(..., min_length=1)
 
 
+class RunTaskCodeRequest(BaseModel):
+    code: str = Field(..., min_length=1)
+    input_data: str = Field(default="")
+
+
 class ReviewTaskSubmissionRequest(BaseModel):
     approve: bool
     comment: Optional[str] = Field(default=None, max_length=1000)
@@ -215,22 +221,51 @@ class AdminUpdateStudentRequest(BaseModel):
     course_group_ids: Optional[Dict[str, str]] = None
 
 
+class LinkParentRequest(BaseModel):
+    tg_username: str = Field(..., min_length=2, max_length=33)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    surname: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    telegram_id: Optional[str] = Field(default=None, max_length=100)
+    phone: Optional[str] = Field(default=None, max_length=20)
+    password: Optional[str] = Field(default=None, min_length=6)
+
+
 class CreateCourseGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     student_ids: List[str] = Field(default_factory=list)
     schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
+    current_topic_id: Optional[str] = None
 
 
 class UpdateCourseGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     student_ids: Optional[List[str]] = None
     schedule_slots: Optional[List[GroupScheduleSlot]] = None
+    current_topic_id: Optional[str] = None
 
 
 class CreateCourseRequestLeadRequest(BaseModel):
     contact_name: Optional[str] = Field(default=None, max_length=120)
     contact_value: str = Field(..., min_length=3, max_length=300)
     comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class CreateNewsArticleRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    intro: str = Field(default="", max_length=300)
+    preview: str = Field(default="", max_length=500)
+    body: List[str] = Field(default_factory=list)
+    slug: Optional[str] = Field(default=None, max_length=200)
+    is_published: bool = True
+
+
+class UpdateNewsArticleRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    intro: Optional[str] = Field(default=None, max_length=300)
+    preview: Optional[str] = Field(default=None, max_length=500)
+    body: Optional[List[str]] = None
+    slug: Optional[str] = Field(default=None, max_length=200)
+    is_published: Optional[bool] = None
 
 
 class UpdateAchievementRequest(BaseModel):
@@ -243,9 +278,28 @@ class UpdateAchievementRequest(BaseModel):
 class AttendanceEntryRequest(BaseModel):
     student_id: str
     present: bool = False
+    paid: bool = False
     note: str = Field(default="", max_length=500)
 
 
 class SaveAttendanceSessionRequest(BaseModel):
     entries: List[AttendanceEntryRequest] = Field(default_factory=list)
     comment: str = Field(default="", max_length=2000)
+    date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    is_cancelled: bool = False
+
+
+class UpdateStudentCoursePaymentModeRequest(BaseModel):
+    payment_mode: PaymentMode
+
+
+class AddSubscriptionPaymentRequest(BaseModel):
+    month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    note: str = Field(default="", max_length=500)
+
+
+class AddLessonPrepaymentRequest(BaseModel):
+    lessons_count: int = Field(..., ge=1, le=100)
+    note: str = Field(default="", max_length=500)

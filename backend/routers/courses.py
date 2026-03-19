@@ -1,6 +1,9 @@
+import os
+from pathlib import Path
 from typing import List
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from models.course import Course
 from models.course_request import CourseRequest
@@ -21,13 +24,21 @@ from schemas.responses import (
     GroupResponse,
     MessageResponse,
     PublicCourseDetailResponse,
+    PublicCourseGroupResponse,
+    PublicCourseLessonResponse,
     UserCoursesResponse,
 )
 from services.auth_service import get_current_user_dependency, require_role
-from services.learning_service import can_edit_course, get_courses_for_user, get_groups_for_course
-from services.learning_service import get_course_students
+from services.learning_service import (
+    can_edit_course,
+    get_course_students,
+    get_courses_for_user,
+    get_group_visible_topic_order,
+    get_groups_for_course,
+    get_student_group_for_course,
+)
 from services.serializer_service import (
-    build_leaderboard,
+    build_group_schedule_summary,
     serialize_course,
     serialize_course_member,
     serialize_group,
@@ -43,7 +54,24 @@ def lesson_is_available(topic: Topic, ordered_topics: list[Topic]) -> bool:
     return str(ordered_topics[0].id) == str(topic.id)
 
 
+async def lesson_is_available_for_user(
+    user: User,
+    course: Course,
+    topic: Topic,
+    ordered_topics: list[Topic],
+    editable: bool,
+) -> bool:
+    if editable or user.user_type != UserType.STUDENT:
+        return True
+    student_group = await get_student_group_for_course(str(user.id), str(course.id))
+    visible_order = get_group_visible_topic_order(student_group, ordered_topics)
+    return topic.order <= visible_order
+
+
 router = APIRouter(prefix="/course", tags=["РљСѓСЂСЃС‹"])
+uploads_dir = Path(os.getenv("UPLOADS_DIR", "uploads"))
+course_uploads_dir = uploads_dir / "courses"
+course_uploads_dir.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/my", response_model=UserCoursesResponse)
@@ -64,7 +92,43 @@ async def public_course_detail(course_id: str):
     course = await Course.get(course_id)
     if not course:
         raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
-    return PublicCourseDetailResponse(course=await serialize_course(course, None))
+    topics = await Topic.find(Topic.course_id == course_id).to_list()
+    topics.sort(key=lambda item: item.order)
+    groups = await get_groups_for_course(course)
+
+    public_groups: List[PublicCourseGroupResponse] = []
+    for group in groups:
+        current_topic_name = None
+        if group.current_topic_id:
+            current_topic = await Topic.get(group.current_topic_id)
+            if current_topic:
+                current_topic_name = current_topic.name
+        public_groups.append(
+            PublicCourseGroupResponse(
+                id=str(group.id),
+                name=group.name,
+                schedule_summary=build_group_schedule_summary(group),
+                current_topic_name=current_topic_name,
+            )
+        )
+
+    public_lessons: List[PublicCourseLessonResponse] = []
+    for topic in topics:
+        public_lessons.append(
+            PublicCourseLessonResponse(
+                id=str(topic.id),
+                name=topic.name,
+                description=topic.description,
+                order=topic.order,
+                total_tasks=await topic.get_total_tasks(),
+            )
+        )
+
+    return PublicCourseDetailResponse(
+        course=await serialize_course(course, None),
+        groups=public_groups,
+        lessons=public_lessons,
+    )
 
 
 @router.get("/{course_id}", response_model=CourseDetailResponse)
@@ -93,18 +157,18 @@ async def course_detail(
         course_students.sort(key=lambda item: (item.surname.lower(), item.name.lower(), item.tg_username.lower()))
     return CourseDetailResponse(
         course=await serialize_course(course, user),
-        groups=[serialize_group(group) for group in groups],
+        groups=[await serialize_group(group, course) for group in groups],
         students=course_students,
         lessons=[
             await serialize_topic(
                 topic,
                 user,
                 can_edit=editable,
-                can_access=editable or lesson_is_available(topic, topics),
+                can_access=await lesson_is_available_for_user(user, course, topic, topics, editable),
             )
             for topic in topics
         ],
-        leaderboard=await build_leaderboard(course),
+        leaderboard=[],
     )
 
 
@@ -128,6 +192,27 @@ async def add_course(
     )
     await course.insert()
     return MessageResponse(message=f"РљСѓСЂСЃ '{course.name}' СЃРѕР·РґР°РЅ", success=True)
+
+
+@router.post("/upload-cover")
+async def upload_course_cover(
+    file: UploadFile = File(...),
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Поддерживаются только изображения jpg, png, webp и gif",
+        )
+
+    filename = f"{uuid4().hex}{ext}"
+    target_path = course_uploads_dir / filename
+    content = await file.read()
+    target_path.write_bytes(content)
+    await file.close()
+
+    return {"url": f"/uploads/courses/{filename}", "filename": filename}
 
 
 @router.put("/{course_id}", response_model=MessageResponse)
@@ -197,6 +282,7 @@ async def create_course_group(
         teachers=list(set(course.teacher_ids + [str(user.id)])),
         students=payload.student_ids,
         schedule_slots=payload.schedule_slots,
+        current_topic_id=payload.current_topic_id,
     )
     await group.insert()
 
@@ -205,7 +291,7 @@ async def create_course_group(
         course.touch()
         await course.save()
 
-    return serialize_group(group)
+    return await serialize_group(group, course)
 
 
 @router.put("/{course_id}/groups/{group_id}", response_model=GroupResponse)
@@ -229,7 +315,11 @@ async def update_course_group(
         group.name = payload.name
     if payload.schedule_slots is not None:
         group.schedule_slots = payload.schedule_slots
+    if payload.current_topic_id is not None:
+        group.current_topic_id = payload.current_topic_id or None
     if payload.student_ids is not None:
+        group.touch()
+        await group.save()
         course_groups = await get_groups_for_course(course)
         normalized_student_ids = list(dict.fromkeys(payload.student_ids))
         for course_group in course_groups:
@@ -241,11 +331,13 @@ async def update_course_group(
                     for student_id in course_group.students
                     if student_id not in normalized_student_ids
                 ]
+            course_group.touch()
             await course_group.save()
         group = await Group.get(group_id)
     group.teachers = list(set(group.teachers + course.teacher_ids + [str(user.id)]))
+    group.touch()
     await group.save()
-    return serialize_group(group)
+    return await serialize_group(group, course)
 
 
 @router.delete("/{course_id}/groups/{group_id}", response_model=MessageResponse)

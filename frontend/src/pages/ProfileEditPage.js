@@ -6,6 +6,7 @@ import ImageUploadControl from "../components/ImageUploadControl";
 import Header from "../components/Header/Header";
 import { isAuthenticated } from "../api/auth";
 import {
+  changePassword,
   getProfile,
   updateProfile,
   uploadProfileAvatar,
@@ -47,6 +48,8 @@ function ProfileEditPage() {
           phone: response.phone || "",
           bio: response.bio || "",
           avatar_url: response.avatar_url || "",
+          old_password: "",
+          new_password: "",
         });
         setError("");
       } catch (err) {
@@ -73,7 +76,24 @@ function ProfileEditPage() {
     setError("");
     setMessage("");
     try {
-      const response = await updateProfile(form);
+      const response = await updateProfile({
+        name: form.name,
+        surname: form.surname,
+        tg_username: form.tg_username,
+        telegram_id: form.telegram_id,
+        phone: form.phone,
+        bio: form.bio,
+        avatar_url: form.avatar_url,
+      });
+      if (form.old_password || form.new_password) {
+        if (!form.old_password || !form.new_password) {
+          throw new Error("\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043e\u0431\u0430 \u043f\u043e\u043b\u044f \u0434\u043b\u044f \u0441\u043c\u0435\u043d\u044b \u043f\u0430\u0440\u043e\u043b\u044f");
+        }
+        await changePassword({
+          old_password: form.old_password,
+          new_password: form.new_password,
+        });
+      }
       setForm({
         name: response.name || "",
         surname: response.surname || "",
@@ -82,8 +102,14 @@ function ProfileEditPage() {
         phone: response.phone || "",
         bio: response.bio || "",
         avatar_url: response.avatar_url || "",
+        old_password: "",
+        new_password: "",
       });
-      setMessage("Профиль обновлен");
+      setMessage(
+        form.old_password || form.new_password
+          ? "\u041f\u0440\u043e\u0444\u0438\u043b\u044c \u0438 \u043f\u0430\u0440\u043e\u043b\u044c \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b"
+          : "\u041f\u0440\u043e\u0444\u0438\u043b\u044c \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d"
+      );
     } catch (err) {
       setError(err.message || "Не удалось сохранить профиль");
     } finally {
@@ -125,7 +151,7 @@ function ProfileEditPage() {
         <TopBar>
           <div>
             <Eyebrow>Настройки профиля</Eyebrow>
-            <Title>Изменить данные и фото</Title>
+            <Title>Редактировать профиль</Title>
           </div>
           <BackLink to="/profile">Назад в профиль</BackLink>
         </TopBar>
@@ -237,11 +263,39 @@ function ProfileEditPage() {
                     }
                   />
                 </Field>
+
+                <Field>
+                  <Label>{"\u0422\u0435\u043a\u0443\u0449\u0438\u0439 \u043f\u0430\u0440\u043e\u043b\u044c"}</Label>
+                  <Input
+                    type="password"
+                    value={form.old_password}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        old_password: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+
+                <Field>
+                  <Label>{"\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c"}</Label>
+                  <Input
+                    type="password"
+                    value={form.new_password}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        new_password: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
               </FormGrid>
 
               <ActionRow>
                 <PrimaryButton type="submit" disabled={saving}>
-                  {saving ? "Сохраняю..." : "Сохранить изменения"}
+                  {saving ? "Сохраняю..." : "Сохранить профиль"}
                 </PrimaryButton>
               </ActionRow>
             </FormCard>

@@ -87,3 +87,26 @@ async def delete_user(user_id: str) -> bool:
 
 async def exists(tg_username: str) -> bool:
     return await get_by_tg_username(tg_username) is not None
+
+
+async def get_linked_students_for_parent(parent: User) -> List[User]:
+    if parent.user_type != UserType.PARENT or not parent.linked_student_ids:
+        return []
+
+    students: List[User] = []
+    for student_id in parent.linked_student_ids:
+        student = await User.get(student_id)
+        if student and student.user_type == UserType.STUDENT:
+            students.append(student)
+
+    students.sort(key=lambda item: (item.surname.lower(), item.name.lower(), item.tg_username.lower()))
+    return students
+
+
+async def get_parents_for_student(student_id: str) -> List[User]:
+    parents = await User.find(
+        User.user_type == UserType.PARENT,
+        User.linked_student_ids == student_id,
+    ).to_list()
+    parents.sort(key=lambda item: (item.surname.lower(), item.name.lower(), item.tg_username.lower()))
+    return parents

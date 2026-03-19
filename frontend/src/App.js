@@ -2,6 +2,7 @@ import "./App.css";
 import React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { getCurrentUserType, isAuthenticated } from "./api/auth";
 import { AchievementToastProvider } from "./components/AchievementToastProvider";
 import GlobalStyle from "./styles/GlobalStyle";
 import AdminEventsPage from "./pages/AdminEventsPage";
@@ -23,6 +24,26 @@ import ProfileSecurityPage from "./pages/ProfileSecurityPage";
 import StudentsPage from "./pages/StudentsPage";
 import TeachingPage from "./pages/TeachingPage";
 
+function RequireAuth({ children }) {
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
+function RequireRoles({ roles, children }) {
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const userType = getCurrentUserType();
+  if (!roles.includes(userType)) {
+    return <Navigate to="/profile" replace />;
+  }
+
+  return children;
+}
+
 function App() {
   return (
     <AchievementToastProvider>
@@ -30,32 +51,107 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/events" element={<EventsPage />} />
-        <Route path="/admin/events" element={<AdminEventsPage />} />
+        <Route
+          path="/admin/events"
+          element={
+            <RequireRoles roles={["admin"]}>
+              <AdminEventsPage />
+            </RequireRoles>
+          }
+        />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<Navigate to="/login" replace />} />
-        <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/profile/edit" element={<ProfileEditPage />} />
-        <Route path="/profile/security" element={<ProfileSecurityPage />} />
+        <Route
+          path="/profile"
+          element={
+            <RequireAuth>
+              <ProfilePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/profile/edit"
+          element={
+            <RequireAuth>
+              <ProfileEditPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/profile/security"
+          element={
+            <RequireAuth>
+              <ProfileSecurityPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/achievements/manage"
-          element={<AchievementsManagePage />}
+          element={
+            <RequireRoles roles={["teacher", "admin"]}>
+              <AchievementsManagePage />
+            </RequireRoles>
+          }
         />
         <Route
           path="/achievements/overview"
-          element={<AchievementsOverviewPage />}
+          element={
+            <RequireRoles roles={["admin"]}>
+              <AchievementsOverviewPage />
+            </RequireRoles>
+          }
         />
-        <Route path="/students" element={<StudentsPage />} />
+        <Route
+          path="/students"
+          element={
+            <RequireRoles roles={["teacher", "admin"]}>
+              <StudentsPage />
+            </RequireRoles>
+          }
+        />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/news/:slug" element={<NewsArticlePage />} />
-        <Route path="/mycourses" element={<MyCoursesPage />} />
-        <Route path="/teaching" element={<TeachingPage />} />
-        <Route path="/mycourses/:courseId" element={<CoursePage />} />
+        <Route
+          path="/mycourses"
+          element={
+            <RequireRoles roles={["student", "teacher", "admin"]}>
+              <MyCoursesPage />
+            </RequireRoles>
+          }
+        />
+        <Route
+          path="/teaching"
+          element={
+            <RequireRoles roles={["teacher", "admin"]}>
+              <TeachingPage />
+            </RequireRoles>
+          }
+        />
+        <Route
+          path="/mycourses/:courseId"
+          element={
+            <RequireRoles roles={["student", "teacher", "admin"]}>
+              <CoursePage />
+            </RequireRoles>
+          }
+        />
         <Route path="/courses/:courseId" element={<PublicCoursePage />} />
         <Route
           path="/mycourses/:courseId/lessons/:lessonId"
-          element={<LessonPage />}
+          element={
+            <RequireRoles roles={["student", "teacher", "admin"]}>
+              <LessonPage />
+            </RequireRoles>
+          }
         />
-        <Route path="/myschedule" element={<MySchedulePage />} />
+        <Route
+          path="/myschedule"
+          element={
+            <RequireRoles roles={["student", "teacher", "admin"]}>
+              <MySchedulePage />
+            </RequireRoles>
+          }
+        />
       </Routes>
     </AchievementToastProvider>
   );

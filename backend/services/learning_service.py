@@ -2,7 +2,9 @@ from typing import Dict, List, Optional, Set
 
 from models.course import Course
 from models.group import Group
+from models.student_course_enrollment import StudentCourseEnrollment
 from models.user import User, UserType
+from services.billing_service import get_or_create_enrollment
 
 
 async def get_groups_for_course(course: Course) -> List[Group]:
@@ -66,6 +68,23 @@ async def get_student_group_assignments(student_id: str) -> Dict[str, Group]:
     return assignments
 
 
+async def get_student_group_for_course(student_id: str, course_id: str) -> Optional[Group]:
+    assignments = await get_student_group_assignments(student_id)
+    return assignments.get(course_id)
+
+
+def get_group_visible_topic_order(group: Optional[Group], ordered_topics: List[object]) -> int:
+    if not ordered_topics:
+        return -1
+    if not group or not getattr(group, "current_topic_id", None):
+        return ordered_topics[0].order
+
+    for topic in ordered_topics:
+        if str(topic.id) == str(group.current_topic_id):
+            return topic.order
+    return ordered_topics[0].order
+
+
 async def sync_student_course_memberships(
     student_id: str,
     course_ids: List[str],
@@ -78,6 +97,7 @@ async def sync_student_course_memberships(
         if str(course_id) in target_ids and group_id
     }
     courses = await Course.find_all().to_list()
+    active_course_ids: Set[str] = set()
     for course in courses:
         course_id = str(course.id)
         has_member = student_id in course.student_ids
@@ -93,6 +113,13 @@ async def sync_student_course_memberships(
 
         course_groups = await get_groups_for_course(course)
         target_group_id = normalized_group_ids.get(course_id)
+        if should_have:
+            active_course_ids.add(course_id)
+            await get_or_create_enrollment(
+                student_id,
+                course_id,
+                group_id=target_group_id,
+            )
         for group in course_groups:
             changed = False
             group_id = str(group.id)
@@ -105,3 +132,11 @@ async def sync_student_course_memberships(
                 changed = True
             if changed:
                 await group.save()
+
+    stale_enrollments = await StudentCourseEnrollment.find(
+        StudentCourseEnrollment.student_id == student_id,
+    ).to_list()
+    for enrollment in stale_enrollments:
+        if enrollment.course_id in active_course_ids:
+            continue
+        await enrollment.delete()

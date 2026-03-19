@@ -1,23 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 
 import Header from "../components/Header/Header";
 import { clearSession, isAuthenticated, logout } from "../api/auth";
 import { getDashboard } from "../api/account";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8002";
+const EMPTY_ARRAY = [];
 
 function formatDateTime(value) {
-  if (!value) {
-    return "Без даты";
-  }
-
+  if (!value) return "Без даты";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
+  if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("ru-RU", {
     dateStyle: "short",
     timeStyle: "short",
@@ -37,19 +32,17 @@ function getInitials(user) {
 function getRoleLabel(userType) {
   if (userType === "admin") return "Администратор";
   if (userType === "teacher") return "Преподаватель";
+  if (userType === "parent") return "Родитель";
   return "Ученик";
 }
 
 function ProfilePage() {
-  const location = useLocation();
   const authed = isAuthenticated();
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [shouldRedirectToLogin, setShouldRedirectToLogin] = useState(false);
-  const [achievementCourseFilter, setAchievementCourseFilter] = useState("all");
-  const [achievementStateFilter, setAchievementStateFilter] = useState("all");
-  const [achievementsAnchor, setAchievementsAnchor] = useState(null);
+  const [achievementView, setAchievementView] = useState("common");
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -73,14 +66,51 @@ function ProfilePage() {
       }
     };
 
-    loadDashboard();
-  }, []);
-
-  useEffect(() => {
-    if (location.hash === "#achievements" && achievementsAnchor) {
-      achievementsAnchor.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (authed) {
+      loadDashboard();
     }
-  }, [location.hash, achievementsAnchor]);
+  }, [authed]);
+
+  const user = dashboard?.user || null;
+  const courses = dashboard?.courses || EMPTY_ARRAY;
+  const achievements = dashboard?.achievements || EMPTY_ARRAY;
+  const linkedStudents = dashboard?.linked_students || EMPTY_ARRAY;
+  const pendingReviews = dashboard?.pending_reviews || EMPTY_ARRAY;
+  const isStudent = user?.user_type === "student";
+  const isAdmin = user?.user_type === "admin";
+  const isParent = user?.user_type === "parent";
+  const courseDebts = courses.filter(
+    (course) => Number(course?.finance?.debt_count || 0) > 0
+  );
+  const primaryDebt = courseDebts[0]?.finance || null;
+  const unlockedAchievements = achievements.filter(
+    (achievement) => achievement.state === "unlocked"
+  ).length;
+  const observedCourses = linkedStudents.reduce(
+    (sum, student) => sum + (student.course_progress?.length || 0),
+    0
+  );
+
+  const commonAchievements = achievements.filter((achievement) => !achievement.course_id);
+  const courseAchievementGroups = useMemo(() => {
+    const courseMap = new Map(courses.map((course) => [course.id, course]));
+    const grouped = achievements.reduce((acc, achievement) => {
+      if (!achievement.course_id) return acc;
+      if (!acc[achievement.course_id]) {
+        acc[achievement.course_id] = [];
+      }
+      acc[achievement.course_id].push(achievement);
+      return acc;
+    }, {});
+
+    return Object.entries(grouped)
+      .map(([courseId, items]) => ({
+        courseId,
+        courseName: courseMap.get(courseId)?.name || "Курс",
+        items,
+      }))
+      .sort((a, b) => a.courseName.localeCompare(b.courseName, "ru"));
+  }, [achievements, courses]);
 
   if (!authed) {
     return <Navigate to="/login" replace />;
@@ -112,49 +142,96 @@ function ProfilePage() {
     );
   }
 
-  if (!dashboard) {
+  if (!dashboard || !user) {
     return null;
   }
 
-  const {
-    user,
-    courses,
-    achievements,
-    pending_reviews,
-    course_requests = [],
-  } =
-    dashboard;
-  const isStudent = user.user_type === "student";
-  const isTeacher = user.user_type === "teacher";
-  const isAdmin = user.user_type === "admin";
-  const unlockedAchievements = achievements.filter(
-    (achievement) => achievement.state === "unlocked"
-  ).length;
-  const achievementCourseOptions = courses.filter((course) =>
-    achievements.some((achievement) => achievement.course_id === course.id)
+  const renderAchievementCard = (achievement) => (
+    <AchievementCard key={achievement.id} $state={achievement.state}>
+      <AchievementAvatar $state={achievement.state}>
+        {achievement.avatar_url ? (
+          <img
+            src={resolveAssetUrl(achievement.avatar_url)}
+            alt={achievement.title}
+          />
+        ) : (
+          <span>{achievement.title.slice(0, 1).toUpperCase()}</span>
+        )}
+      </AchievementAvatar>
+      <AchievementBody>
+        <strong>
+          {achievement.state === "hidden"
+            ? "Скрытое достижение"
+            : achievement.title}
+        </strong>
+        <p>
+          {achievement.state === "hidden"
+            ? "Описание появится после открытия."
+            : achievement.description}
+        </p>
+        {achievement.unlocked_at && (
+          <small>Открыто: {formatDateTime(achievement.unlocked_at)}</small>
+        )}
+      </AchievementBody>
+    </AchievementCard>
   );
-  const filteredAchievements = achievements.filter((achievement) => {
-    if (achievementCourseFilter === "common" && achievement.course_id) {
-      return false;
-    }
 
-    if (
-      achievementCourseFilter !== "all" &&
-      achievementCourseFilter !== "common" &&
-      achievement.course_id !== achievementCourseFilter
-    ) {
-      return false;
-    }
+  const renderLinkedStudent = (student) => (
+    <LinkedStudentCard key={student.user_id}>
+      <LinkedStudentTop>
+        <div>
+          <LinkedStudentName>
+            {student.name} {student.surname}
+          </LinkedStudentName>
+          <MutedText>@{student.tg_username}</MutedText>
+        </div>
+        <LinkedStudentStatGroup>
+          <span>Прогресс: {Math.round(student.progress_percent || 0)}%</span>
+          <span>Баллы: {student.points || 0}</span>
+        </LinkedStudentStatGroup>
+      </LinkedStudentTop>
 
-    if (
-      achievementStateFilter !== "all" &&
-      achievement.state !== achievementStateFilter
-    ) {
-      return false;
-    }
-
-    return true;
-  });
+      {(student.course_progress || []).length === 0 ? (
+        <MutedText>Ученик пока не привязан ни к одному курсу.</MutedText>
+      ) : (
+        <LinkedCourseList>
+          {student.course_progress.map((course) => (
+            <LinkedCourseCard key={`${student.user_id}:${course.course_id}`}>
+              <CourseHeader>
+                <strong>{course.course_name}</strong>
+                <span>{Math.round(course.progress_percent || 0)}%</span>
+              </CourseHeader>
+              <CourseTrack>
+                <CourseBar
+                  style={{
+                    width: `${Math.min(100, course.progress_percent || 0)}%`,
+                    background: "#ff7f2a",
+                  }}
+                />
+              </CourseTrack>
+              <LinkedMetaGrid>
+                <LinkedMetaBox>
+                  <span>Группа</span>
+                  <strong>{course.group_name || "Не назначена"}</strong>
+                </LinkedMetaBox>
+                <LinkedMetaBox>
+                  <span>Посещаемость</span>
+                  <strong>
+                    {course.attendance?.attended_sessions || 0}/
+                    {course.attendance?.total_sessions || 0}
+                  </strong>
+                </LinkedMetaBox>
+                <LinkedMetaBox>
+                  <span>Оплата</span>
+                  <strong>{course.finance?.debt_label || "Без долга"}</strong>
+                </LinkedMetaBox>
+              </LinkedMetaGrid>
+            </LinkedCourseCard>
+          ))}
+        </LinkedCourseList>
+      )}
+    </LinkedStudentCard>
+  );
 
   return (
     <Page>
@@ -186,10 +263,16 @@ function ProfilePage() {
               </div>
 
               <ActionRow>
-                <PrimaryLink to="/profile/edit">Изменить профиль</PrimaryLink>
-                <SecondaryLink to="/profile/security">
-                  Сменить пароль
-                </SecondaryLink>
+                <PrimaryLink to="/profile/edit">Редактировать профиль</PrimaryLink>
+                <DangerAction
+                  type="button"
+                  onClick={async () => {
+                    await logout();
+                    window.location.href = "/login";
+                  }}
+                >
+                  Выйти
+                </DangerAction>
               </ActionRow>
             </HeroTop>
 
@@ -199,196 +282,139 @@ function ProfilePage() {
                 <strong>@{user.tg_username}</strong>
               </SummaryBox>
               <SummaryBox>
-                <span>Баллы</span>
-                <strong>{user.points}</strong>
+                <span>{isStudent ? "Баллы" : isParent ? "Дети" : "Проверка"}</span>
+                <strong>
+                  {isStudent ? user.points : isParent ? linkedStudents.length : pendingReviews.length}
+                </strong>
               </SummaryBox>
-              {!isAdmin && (
+              {!isAdmin && !isParent && (
                 <SummaryBox>
                   <span>Достижения</span>
                   <strong>{unlockedAchievements}</strong>
                 </SummaryBox>
               )}
               <SummaryBox>
-                <span>Курсы</span>
-                <strong>{courses.length}</strong>
+                <span>{isParent ? "Курсы детей" : "Курсы"}</span>
+                <strong>{isParent ? observedCourses : courses.length}</strong>
               </SummaryBox>
-              {isStudent && (
-                <>
-                  <SummaryBox>
-                    <span>Абонемент</span>
-                    <strong>{user.subscription_status || "не указан"}</strong>
-                  </SummaryBox>
-                  <SummaryBox>
-                    <span>Остаток занятий</span>
-                    <strong>{user.lessons_remaining ?? "не указан"}</strong>
-                  </SummaryBox>
-                </>
+              {isStudent && primaryDebt && (
+                <SummaryBox>
+                  <span>
+                    {primaryDebt.payment_mode === "subscription"
+                      ? "Абонемент"
+                      : "Оплата"}
+                  </span>
+                  <strong>
+                    {courseDebts.length > 1
+                      ? `Долги по курсам: ${courseDebts.length}`
+                      : primaryDebt.debt_label}
+                  </strong>
+                </SummaryBox>
               )}
             </SummaryGrid>
+          </HeroBody>
+        </HeroCard>
 
-            <CoursesSection>
-              <SectionMiniTitle>Подключенные курсы</SectionMiniTitle>
-              <CourseList>
-                {courses.length === 0 && (
-                  <MutedText>Пока нет подключенных курсов.</MutedText>
-                )}
-                {courses.map((course) => (
-                  <CourseLine key={course.id}>
-                    <CourseHeader>
-                      <Link to={`/mycourses/${course.id}`}>{course.name}</Link>
+        <SectionCard>
+          <SectionHeader>
+            <SectionTitle>{isParent ? "Мои дети" : "Мои курсы"}</SectionTitle>
+          </SectionHeader>
+
+          {isParent ? (
+            linkedStudents.length === 0 ? (
+              <MutedText>К этому аккаунту пока не привязан ни один ученик.</MutedText>
+            ) : (
+              <LinkedStudentsList>{linkedStudents.map(renderLinkedStudent)}</LinkedStudentsList>
+            )
+          ) : (
+            <CourseList>
+              {courses.length === 0 && (
+                <MutedText>Пока нет подключенных курсов.</MutedText>
+              )}
+              {courses.map((course) => (
+                <CourseLine key={course.id}>
+                  <CourseHeader>
+                    <Link to={`/mycourses/${course.id}`}>{course.name}</Link>
+                    {isStudent ? (
                       <span>
                         {course.earned_points}/{course.total_points} баллов
                       </span>
-                    </CourseHeader>
+                    ) : (
+                      <span>
+                        {course.total_students} учеников · {course.total_tasks} задач
+                      </span>
+                    )}
+                  </CourseHeader>
+                  {isStudent ? (
                     <CourseTrack>
                       <CourseBar
                         style={{
-                          width: `${Math.min(100, course.progress_percent)}%`,
+                          width: `${Math.min(100, course.progress_percent || 0)}%`,
                           background: course.accent_color,
                         }}
                       />
                     </CourseTrack>
-                  </CourseLine>
-                ))}
-              </CourseList>
-            </CoursesSection>
-          </HeroBody>
-        </HeroCard>
+                  ) : (
+                    <MutedText>
+                      {course.active_group_name
+                        ? `Ваша группа: ${course.active_group_name}`
+                        : "Курс доступен для управления"}
+                    </MutedText>
+                  )}
+                </CourseLine>
+              ))}
+            </CourseList>
+          )}
+        </SectionCard>
 
-        <SplitGrid>
-          <MainColumn>
-            {(isTeacher || isAdmin) && (
+        {!isAdmin && !isParent && (
+          <SplitGrid>
+            <MainColumn>
               <SectionCard>
                 <SectionHeader>
-                  <SectionTitle>Заявки на курсы</SectionTitle>
-                  <CountBadge>{course_requests.length}</CountBadge>
+                  <SectionTitle>Достижения</SectionTitle>
+                  <TabRow>
+                    <TabButton
+                      type="button"
+                      $active={achievementView === "common"}
+                      onClick={() => setAchievementView("common")}
+                    >
+                      Общие
+                    </TabButton>
+                    <TabButton
+                      type="button"
+                      $active={achievementView === "courses"}
+                      onClick={() => setAchievementView("courses")}
+                    >
+                      По курсам
+                    </TabButton>
+                  </TabRow>
                 </SectionHeader>
-                {course_requests.length === 0 ? (
-                  <EmptyCard>Новых заявок пока нет.</EmptyCard>
+
+                {achievementView === "common" ? (
+                  commonAchievements.length === 0 ? (
+                    <EmptyCard>Общих достижений пока нет.</EmptyCard>
+                  ) : (
+                    <AchievementsGrid>{commonAchievements.map(renderAchievementCard)}</AchievementsGrid>
+                  )
+                ) : courseAchievementGroups.length === 0 ? (
+                  <EmptyCard>По курсам пока нет достижений.</EmptyCard>
                 ) : (
                   <Stack>
-                    {course_requests.map((request) => (
-                      <QueueItem key={request.id}>
-                        <div>
-                          <strong>{request.course_name}</strong>
-                          <QueueMeta>
-                            {request.contact_name || "Без имени"} · {request.contact_value}
-                          </QueueMeta>
-                          {request.comment && <QueueMeta>{request.comment}</QueueMeta>}
-                          <QueueMeta>{formatDateTime(request.created_at)}</QueueMeta>
-                        </div>
-                      </QueueItem>
+                    {courseAchievementGroups.map((group) => (
+                      <CourseAchievementBlock key={group.courseId}>
+                        <CourseAchievementTitle>{group.courseName}</CourseAchievementTitle>
+                        <AchievementsGrid>
+                          {group.items.map(renderAchievementCard)}
+                        </AchievementsGrid>
+                      </CourseAchievementBlock>
                     ))}
                   </Stack>
                 )}
               </SectionCard>
-            )}
-
-            {!isAdmin && (
-              <SectionCard>
-                <SectionHeader>
-                  <SectionTitle>Достижения</SectionTitle>
-                  <FiltersRow>
-                    <Select
-                      value={achievementCourseFilter}
-                      onChange={(event) =>
-                        setAchievementCourseFilter(event.target.value)
-                      }
-                    >
-                      <option value="all">Все достижения</option>
-                      <option value="common">Общие достижения</option>
-                      {achievementCourseOptions.map((course) => (
-                        <option key={course.id} value={course.id}>
-                          {course.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <Select
-                      value={achievementStateFilter}
-                      onChange={(event) =>
-                        setAchievementStateFilter(event.target.value)
-                      }
-                    >
-                      <option value="all">Любой статус</option>
-                      <option value="unlocked">Открытые</option>
-                      <option value="locked">Не выполнены</option>
-                      <option value="hidden">Скрытые</option>
-                    </Select>
-                  </FiltersRow>
-                </SectionHeader>
-
-                {filteredAchievements.length === 0 && (
-                  <MutedText>
-                    Под выбранный фильтр пока ничего не найдено.
-                  </MutedText>
-                )}
-
-                <AchievementsGrid ref={setAchievementsAnchor} id="achievements">
-                  {filteredAchievements.map((achievement) => (
-                    <AchievementCard key={achievement.id} $state={achievement.state}>
-                      <AchievementAvatar $state={achievement.state}>
-                        {achievement.avatar_url ? (
-                          <img
-                            src={resolveAssetUrl(achievement.avatar_url)}
-                            alt={achievement.title}
-                          />
-                        ) : (
-                          <span>{achievement.title.slice(0, 1).toUpperCase()}</span>
-                        )}
-                      </AchievementAvatar>
-                      <AchievementBody>
-                        <strong>
-                          {achievement.state === "hidden"
-                            ? "Скрытое достижение"
-                            : achievement.title}
-                        </strong>
-                        <p>
-                          {achievement.state === "hidden"
-                            ? "Условие пока не раскрывается."
-                            : achievement.description}
-                        </p>
-                        {achievement.unlocked_at && (
-                          <small>
-                            Открыто: {formatDateTime(achievement.unlocked_at)}
-                          </small>
-                        )}
-                      </AchievementBody>
-                    </AchievementCard>
-                  ))}
-                </AchievementsGrid>
-              </SectionCard>
-            )}
-          </MainColumn>
-
-          <SideColumn>
-            {(isTeacher || isAdmin) && (
-              <SectionCard>
-                <SectionHeader>
-                  <SectionTitle>Управление занятиями</SectionTitle>
-                  <CountBadge>{pending_reviews.length}</CountBadge>
-                </SectionHeader>
-                <MutedText>
-                  Посещаемость по датам, ручная проверка и заявки на курсы вынесены в
-                  отдельный раздел.
-                </MutedText>
-                <PrimaryLink to="/teaching">Открыть раздел</PrimaryLink>
-              </SectionCard>
-            )}
-
-            <SectionCard>
-              <SectionTitle>Аккаунт</SectionTitle>
-              <DangerAction
-                type="button"
-                onClick={async () => {
-                  await logout();
-                  window.location.href = "/login";
-                }}
-              >
-                Выйти
-              </DangerAction>
-            </SectionCard>
-          </SideColumn>
-        </SplitGrid>
+            </MainColumn>
+          </SplitGrid>
+        )}
       </Content>
     </Page>
   );
@@ -502,14 +528,14 @@ const PrimaryLink = styled(Link)`
   font-weight: 800;
 `;
 
-const SecondaryLink = styled(Link)`
-  text-decoration: none;
-  border-radius: 12px;
-  border: 1px solid #d7dbe4;
-  background: #fff;
-  color: var(--text);
+const DangerAction = styled.button`
+  border: none;
+  border-radius: 14px;
+  background: #f05d5d;
+  color: #fff;
   padding: 14px 18px;
-  font-weight: 700;
+  font-weight: 800;
+  cursor: pointer;
 `;
 
 const SummaryGrid = styled.div`
@@ -532,75 +558,6 @@ const SummaryBox = styled.div`
   strong {
     font-size: 20px;
   }
-`;
-
-const CoursesSection = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const SectionMiniTitle = styled.h2`
-  font-size: 28px;
-`;
-
-const CourseList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const CourseLine = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`;
-
-const CourseHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-
-  a {
-    text-decoration: none;
-    font-weight: 700;
-  }
-`;
-
-const CourseTrack = styled.div`
-  width: 100%;
-  height: 14px;
-  border-radius: 999px;
-  background: #eceff5;
-  overflow: hidden;
-`;
-
-const CourseBar = styled.div`
-  height: 100%;
-  border-radius: 999px;
-`;
-
-const SplitGrid = styled.section`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 24px;
-
-  @media (max-width: 1120px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const MainColumn = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-`;
-
-const SideColumn = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
 `;
 
 const SectionCard = styled.section`
@@ -626,17 +583,144 @@ const SectionTitle = styled.h2`
   font-size: 30px;
 `;
 
-const FiltersRow = styled.div`
+const CourseList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const CourseLine = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+const CourseHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+
+  a,
+  strong {
+    text-decoration: none;
+    font-weight: 700;
+  }
+`;
+
+const CourseTrack = styled.div`
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: #eceff5;
+  overflow: hidden;
+`;
+
+const CourseBar = styled.div`
+  height: 100%;
+  border-radius: 999px;
+`;
+
+const LinkedStudentsList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+`;
+
+const LinkedStudentCard = styled.div`
+  border: 1px solid #e6ebf2;
+  border-radius: 22px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+`;
+
+const LinkedStudentTop = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+`;
+
+const LinkedStudentName = styled.h3`
+  font-size: 24px;
+`;
+
+const LinkedStudentStatGroup = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+
+  span {
+    padding: 10px 12px;
+    border-radius: 999px;
+    background: #f3f6fb;
+    font-weight: 700;
+  }
+`;
+
+const LinkedCourseList = styled.div`
+  display: grid;
+  gap: 12px;
+`;
+
+const LinkedCourseCard = styled.div`
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #edf0f4;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const LinkedMetaGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+`;
+
+const LinkedMetaBox = styled.div`
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #fff;
+
+  span {
+    display: block;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+`;
+
+const SplitGrid = styled.section`
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+`;
+
+const MainColumn = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+`;
+
+const TabRow = styled.div`
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
 `;
 
-const Select = styled.select`
-  border: 1px solid #d7dbe4;
-  border-radius: 12px;
-  padding: 12px 14px;
-  background: #fff;
+const TabButton = styled.button`
+  border: 1px solid ${(props) => (props.$active ? "#3d82c4" : "#d7dee8")};
+  border-radius: 999px;
+  padding: 12px 16px;
+  background: ${(props) => (props.$active ? "#eef5fb" : "#fff")};
+  color: ${(props) => (props.$active ? "#23598d" : "var(--text)")};
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
 `;
 
 const AchievementsGrid = styled.div`
@@ -698,21 +782,20 @@ const AchievementBody = styled.div`
   }
 `;
 
-const CountBadge = styled.div`
-  min-width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: #eef5ff;
-  color: #315fa8;
-  font-weight: 800;
-`;
-
 const Stack = styled.div`
   display: flex;
   flex-direction: column;
   gap: 12px;
+`;
+
+const CourseAchievementBlock = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+`;
+
+const CourseAchievementTitle = styled.h3`
+  font-size: 24px;
 `;
 
 const EmptyCard = styled.div`
@@ -720,31 +803,6 @@ const EmptyCard = styled.div`
   border-radius: 18px;
   background: #f6f8fb;
   color: var(--muted);
-`;
-
-const QueueItem = styled.article`
-  padding: 16px;
-  border-radius: 18px;
-  background: #f8fafd;
-  border: 1px solid #e6ebf2;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const QueueMeta = styled.div`
-  color: var(--muted);
-  line-height: 1.6;
-`;
-
-const DangerAction = styled.button`
-  border: none;
-  border-radius: 14px;
-  background: #f05d5d;
-  color: #fff;
-  padding: 14px 18px;
-  font-weight: 800;
-  cursor: pointer;
 `;
 
 const InfoCard = styled.div`

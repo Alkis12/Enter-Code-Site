@@ -76,3 +76,16 @@ export async function updateStudent(studentId, payload) {
     body: payload,
   });
 }
+
+export async function linkParentToStudent(studentId, payload) {
+  return api(`/users/students/${studentId}/parents`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function unlinkParentFromStudent(studentId, parentId) {
+  return api(`/users/students/${studentId}/parents/${parentId}`, {
+    method: "DELETE",
+  });
+}

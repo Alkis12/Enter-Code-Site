@@ -3,8 +3,19 @@ import styled from "styled-components";
 import { Link, Navigate } from "react-router-dom";
 
 import Header from "../components/Header/Header";
-import { createStudent, listStudents, updateStudent } from "../api/account";
+import {
+  createStudent,
+  linkParentToStudent,
+  listStudents,
+  unlinkParentFromStudent,
+  updateStudent,
+} from "../api/account";
 import { getCurrentUserType, isAuthenticated } from "../api/auth";
+import {
+  addLessonPrepayment,
+  addSubscriptionPayment,
+  updateStudentPaymentMode,
+} from "../api/teaching";
 
 const emptyStudentForm = {
   user_id: "",
@@ -17,6 +28,15 @@ const emptyStudentForm = {
   status: "active",
   course_ids: [],
   course_group_ids: {},
+};
+
+const emptyParentForm = {
+  tg_username: "",
+  name: "",
+  surname: "",
+  telegram_id: "",
+  phone: "",
+  password: "",
 };
 
 const fieldLabels = {
@@ -33,6 +53,20 @@ const fieldLabels = {
 function formatProgress(value) {
   const numeric = Number(value) || 0;
   return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}%`;
+}
+
+function formatMonthLabel(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("ru-RU", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
 }
 
 function getFieldMessage(field, message) {
@@ -95,6 +129,12 @@ function StudentsPage() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [message, setMessage] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [showParentModal, setShowParentModal] = useState(false);
+  const [parentStudent, setParentStudent] = useState(null);
+  const [parentForm, setParentForm] = useState(emptyParentForm);
+  const [parentSaving, setParentSaving] = useState(false);
+  const [paymentDrafts, setPaymentDrafts] = useState({});
+  const [paymentSavingKey, setPaymentSavingKey] = useState("");
 
   const loadStudents = async ({ showLoader = true } = {}) => {
     try {
@@ -151,6 +191,13 @@ function StudentsPage() {
     clearFormState();
   };
 
+  const closeParentModal = () => {
+    setShowParentModal(false);
+    setParentStudent(null);
+    setParentForm(emptyParentForm);
+    setFormError("");
+  };
+
   const startCreate = () => {
     setStudentForm(emptyStudentForm);
     setShowModal(true);
@@ -176,6 +223,13 @@ function StudentsPage() {
     clearFormState();
   };
 
+  const startParentLink = (student) => {
+    setParentStudent(student);
+    setParentForm(emptyParentForm);
+    setFormError("");
+    setShowParentModal(true);
+  };
+
   const toggleStudentCourse = (courseId) => {
     setStudentForm((prev) => ({
       ...prev,
@@ -197,6 +251,126 @@ function StudentsPage() {
     setStudentForm((prev) => ({ ...prev, [field]: value }));
     setFieldErrors((prev) => ({ ...prev, [field]: "" }));
     setFormError("");
+  };
+
+  const setParentFieldValue = (field, value) => {
+    setParentForm((prev) => ({ ...prev, [field]: value }));
+    setFormError("");
+  };
+
+  const getPaymentKey = (studentId, courseId) => `${studentId}:${courseId}`;
+
+  const getPaymentDraft = (studentId, courseId, finance = {}) =>
+    paymentDrafts[getPaymentKey(studentId, courseId)] || {
+      month: new Date().toISOString().slice(0, 7),
+      prepayment: "1",
+      payment_mode: finance.payment_mode || "subscription",
+    };
+
+  const setPaymentDraft = (studentId, courseId, patch) => {
+    const key = getPaymentKey(studentId, courseId);
+    setPaymentDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {
+          month: new Date().toISOString().slice(0, 7),
+          prepayment: "1",
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  const handlePaymentModeChange = async (studentId, courseId, paymentMode) => {
+    const key = getPaymentKey(studentId, courseId);
+    try {
+      setPaymentSavingKey(key);
+      await updateStudentPaymentMode(studentId, courseId, paymentMode);
+      setMessage("Тип оплаты обновлен.");
+      setPaymentDraft(studentId, courseId, { payment_mode: paymentMode });
+      await loadStudents({ showLoader: false });
+    } catch (err) {
+      setPageError(err.message || "Не удалось обновить тип оплаты");
+    } finally {
+      setPaymentSavingKey("");
+    }
+  };
+
+  const handleAddSubscriptionMonth = async (studentId, courseId) => {
+    const key = getPaymentKey(studentId, courseId);
+    const draft = getPaymentDraft(studentId, courseId);
+    if (!draft.month) {
+      return;
+    }
+    try {
+      setPaymentSavingKey(key);
+      await addSubscriptionPayment(studentId, courseId, { month: draft.month });
+      setMessage("Оплата по абонементу добавлена.");
+      await loadStudents({ showLoader: false });
+    } catch (err) {
+      setPageError(err.message || "Не удалось отметить оплату");
+    } finally {
+      setPaymentSavingKey("");
+    }
+  };
+
+  const handleAddPrepayment = async (studentId, courseId) => {
+    const key = getPaymentKey(studentId, courseId);
+    const draft = getPaymentDraft(studentId, courseId);
+    const lessonsCount = Number(draft.prepayment || 0);
+    if (!lessonsCount || lessonsCount < 1) {
+      return;
+    }
+    try {
+      setPaymentSavingKey(key);
+      await addLessonPrepayment(studentId, courseId, {
+        lessons_count: lessonsCount,
+      });
+      setMessage("Предоплата добавлена.");
+      await loadStudents({ showLoader: false });
+    } catch (err) {
+      setPageError(err.message || "Не удалось применить предоплату");
+    } finally {
+      setPaymentSavingKey("");
+    }
+  };
+
+  const handleLinkParent = async (event) => {
+    event.preventDefault();
+    if (!parentStudent) {
+      return;
+    }
+
+    try {
+      setParentSaving(true);
+      setFormError("");
+      await linkParentToStudent(parentStudent.user_id, {
+        tg_username: parentForm.tg_username,
+        name: parentForm.name || undefined,
+        surname: parentForm.surname || undefined,
+        telegram_id: parentForm.telegram_id || null,
+        phone: parentForm.phone || null,
+        password: parentForm.password || undefined,
+      });
+      closeParentModal();
+      setMessage("Родитель привязан к ученику.");
+      await loadStudents({ showLoader: false });
+    } catch (err) {
+      setFormError(err.message || "Не удалось привязать родителя");
+    } finally {
+      setParentSaving(false);
+    }
+  };
+
+  const handleUnlinkParent = async (studentId, parentId) => {
+    try {
+      setPageError("");
+      await unlinkParentFromStudent(studentId, parentId);
+      setMessage("Родитель отвязан от ученика.");
+      await loadStudents({ showLoader: false });
+    } catch (err) {
+      setPageError(err.message || "Не удалось отвязать родителя");
+    }
   };
 
   const courseHint = isTeacher
@@ -369,39 +543,181 @@ function StudentsPage() {
                     />
                   </ProgressTrack>
 
+                  <ParentsPanel>
+                    <ParentsHeader>
+                      <BlockTitle>Родители</BlockTitle>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => startParentLink(student)}
+                      >
+                        Добавить родителя
+                      </SecondaryButton>
+                    </ParentsHeader>
+
+                    {(student.parents || []).length === 0 ? (
+                      <CourseMeta>Пока родители не привязаны.</CourseMeta>
+                    ) : (
+                      <ParentChips>
+                        {(student.parents || []).map((parent) => (
+                          <ParentChip key={`${student.user_id}:${parent.user_id}`}>
+                            <div>
+                              <strong>
+                                {parent.name} {parent.surname}
+                              </strong>
+                              <span>
+                                @{parent.tg_username}
+                                {parent.phone ? ` · ${parent.phone}` : ""}
+                              </span>
+                            </div>
+                            <MiniAction
+                              type="button"
+                              onClick={() =>
+                                handleUnlinkParent(student.user_id, parent.user_id)
+                              }
+                            >
+                              Отвязать
+                            </MiniAction>
+                          </ParentChip>
+                        ))}
+                      </ParentChips>
+                    )}
+                  </ParentsPanel>
+
                   <CourseProgressList>
                     {(student.course_progress || []).length === 0 ? (
                       <CourseProgressCard>
                         <CourseMeta>Курсы пока не назначены</CourseMeta>
                       </CourseProgressCard>
                     ) : (
-                      (student.course_progress || []).map((course) => (
-                        <CourseProgressCard
-                          key={`${student.user_id}-${course.course_id}`}
-                        >
-                          <CourseRow>
-                            <CourseLink to={`/mycourses/${course.course_id}`}>
-                              {course.course_name}
-                            </CourseLink>
-                            <strong>
-                              {formatProgress(course.progress_percent)}
-                            </strong>
-                          </CourseRow>
-                          <CourseMeta>
-                            {course.earned_points} / {course.total_points} баллов
-                          </CourseMeta>
-                          <MiniTrack>
-                            <MiniFill
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  Number(course.progress_percent) || 0
-                                )}%`,
-                              }}
-                            />
-                          </MiniTrack>
-                        </CourseProgressCard>
-                      ))
+                      (student.course_progress || []).map((course) => {
+                        const paymentKey = getPaymentKey(
+                          student.user_id,
+                          course.course_id
+                        );
+                        const paymentDraft = getPaymentDraft(
+                          student.user_id,
+                          course.course_id,
+                          course.finance
+                        );
+
+                        return (
+                          <CourseProgressCard key={paymentKey}>
+                            <CourseRow>
+                              <CourseLink to={`/mycourses/${course.course_id}`}>
+                                {course.course_name}
+                              </CourseLink>
+                              <strong>{formatProgress(course.progress_percent)}</strong>
+                            </CourseRow>
+                            <CourseMeta>
+                              {course.earned_points} / {course.total_points} баллов
+                            </CourseMeta>
+                            <MiniTrack>
+                              <MiniFill
+                                style={{
+                                  width: `${Math.min(
+                                    100,
+                                    Number(course.progress_percent) || 0
+                                  )}%`,
+                                }}
+                              />
+                            </MiniTrack>
+                            {course.finance && (
+                              <PaymentPanel>
+                                <PaymentTopRow>
+                                  <PaymentLabel>Оплата</PaymentLabel>
+                                  <Select
+                                    value={paymentDraft.payment_mode}
+                                    onChange={(event) =>
+                                      handlePaymentModeChange(
+                                        student.user_id,
+                                        course.course_id,
+                                        event.target.value
+                                      )
+                                    }
+                                    disabled={paymentSavingKey === paymentKey}
+                                  >
+                                    <option value="subscription">Абонемент</option>
+                                    <option value="per_lesson">Разовое</option>
+                                  </Select>
+                                </PaymentTopRow>
+                                {course.finance.debt_label && (
+                                  <PaymentDebt>{course.finance.debt_label}</PaymentDebt>
+                                )}
+                                {course.finance.payment_mode === "subscription" ? (
+                                  <>
+                                    <PaymentControls>
+                                      <Input
+                                        type="month"
+                                        value={paymentDraft.month}
+                                        onChange={(event) =>
+                                          setPaymentDraft(
+                                            student.user_id,
+                                            course.course_id,
+                                            { month: event.target.value }
+                                          )
+                                        }
+                                      />
+                                      <SecondaryButton
+                                        type="button"
+                                        onClick={() =>
+                                          handleAddSubscriptionMonth(
+                                            student.user_id,
+                                            course.course_id
+                                          )
+                                        }
+                                        disabled={paymentSavingKey === paymentKey}
+                                      >
+                                        Отметить оплату
+                                      </SecondaryButton>
+                                    </PaymentControls>
+                                    <PaymentHistory>
+                                      {(course.finance.monthly_payments || [])
+                                        .slice(0, 4)
+                                        .map((payment) => (
+                                          <PaymentChip key={payment.month}>
+                                            {payment.label || formatMonthLabel(payment.month)}
+                                          </PaymentChip>
+                                        ))}
+                                    </PaymentHistory>
+                                  </>
+                                ) : (
+                                  <>
+                                    <PaymentMeta>
+                                      Оплачено вперед: {course.finance.paid_lessons_ahead || 0}
+                                    </PaymentMeta>
+                                    <PaymentControls>
+                                      <SmallInput
+                                        type="number"
+                                        min="1"
+                                        value={paymentDraft.prepayment}
+                                        onChange={(event) =>
+                                          setPaymentDraft(
+                                            student.user_id,
+                                            course.course_id,
+                                            { prepayment: event.target.value }
+                                          )
+                                        }
+                                      />
+                                      <SecondaryButton
+                                        type="button"
+                                        onClick={() =>
+                                          handleAddPrepayment(
+                                            student.user_id,
+                                            course.course_id
+                                          )
+                                        }
+                                        disabled={paymentSavingKey === paymentKey}
+                                      >
+                                        Предоплата
+                                      </SecondaryButton>
+                                    </PaymentControls>
+                                  </>
+                                )}
+                              </PaymentPanel>
+                            )}
+                          </CourseProgressCard>
+                        );
+                      })
                     )}
                   </CourseProgressList>
                 </StudentCard>
@@ -598,6 +914,99 @@ function StudentsPage() {
                     : isEditing
                     ? "Сохранить изменения"
                     : "Создать ученика"}
+                </PrimaryButton>
+              </ActionRow>
+            </form>
+          </ModalCard>
+        </ModalOverlay>
+      )}
+
+      {showParentModal && (
+        <ModalOverlay onClick={closeParentModal}>
+          <ModalCard onClick={(event) => event.stopPropagation()}>
+            <ModalHeader>
+              <div>
+                <SectionTitle>Родитель для ученика</SectionTitle>
+                <SectionText>
+                  Если логин уже принадлежит родителю, связь просто добавится. Если такого логина
+                  еще нет, будут созданы новый аккаунт родителя и привязка к ученику
+                  {parentStudent ? ` ${parentStudent.name} ${parentStudent.surname}` : ""}.
+                </SectionText>
+              </div>
+              <IconButton type="button" onClick={closeParentModal} aria-label="Закрыть">
+                ×
+              </IconButton>
+            </ModalHeader>
+
+            {formError && <InfoCard $error>{formError}</InfoCard>}
+
+            <form onSubmit={handleLinkParent}>
+              <FormGrid>
+                <Field>
+                  <Label>Логин</Label>
+                  <Input
+                    value={parentForm.tg_username}
+                    onChange={(event) =>
+                      setParentFieldValue("tg_username", event.target.value)
+                    }
+                    required
+                  />
+                </Field>
+                <Field>
+                  <Label>Телефон</Label>
+                  <Input
+                    value={parentForm.phone}
+                    onChange={(event) =>
+                      setParentFieldValue("phone", event.target.value)
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>Имя</Label>
+                  <Input
+                    value={parentForm.name}
+                    onChange={(event) =>
+                      setParentFieldValue("name", event.target.value)
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>Фамилия</Label>
+                  <Input
+                    value={parentForm.surname}
+                    onChange={(event) =>
+                      setParentFieldValue("surname", event.target.value)
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>TG ID</Label>
+                  <Input
+                    value={parentForm.telegram_id}
+                    onChange={(event) =>
+                      setParentFieldValue("telegram_id", event.target.value)
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>Пароль для нового аккаунта</Label>
+                  <Input
+                    type="password"
+                    value={parentForm.password}
+                    onChange={(event) =>
+                      setParentFieldValue("password", event.target.value)
+                    }
+                    placeholder="Нужен только для нового родителя"
+                  />
+                </Field>
+              </FormGrid>
+
+              <ActionRow>
+                <SecondaryButton type="button" onClick={closeParentModal}>
+                  Отмена
+                </SecondaryButton>
+                <PrimaryButton type="submit" disabled={parentSaving}>
+                  {parentSaving ? "Сохраняю..." : "Привязать родителя"}
                 </PrimaryButton>
               </ActionRow>
             </form>
@@ -879,6 +1288,52 @@ const ProgressFill = styled.div`
   background: linear-gradient(90deg, #17a085 0%, #22c3a4 100%);
 `;
 
+const ParentsPanel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #edf0f4;
+`;
+
+const ParentsHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+`;
+
+const ParentChips = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const ParentChip = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid #e6ebf2;
+
+  strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  span {
+    color: var(--muted);
+    line-height: 1.5;
+  }
+`;
+
 const CourseProgressList = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -910,6 +1365,66 @@ const CourseLink = styled(Link)`
 const CourseMeta = styled.div`
   color: var(--muted);
   line-height: 1.5;
+`;
+
+const PaymentPanel = styled.div`
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid #e6ebf2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const PaymentTopRow = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+`;
+
+const PaymentLabel = styled.span`
+  font-weight: 800;
+`;
+
+const PaymentDebt = styled.div`
+  border-radius: 12px;
+  background: #fff5eb;
+  color: #b7631a;
+  padding: 10px 12px;
+  font-weight: 700;
+`;
+
+const PaymentControls = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+`;
+
+const PaymentHistory = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+`;
+
+const PaymentChip = styled.div`
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #24598d;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 700;
+`;
+
+const PaymentMeta = styled.div`
+  color: var(--muted);
+  line-height: 1.5;
+`;
+
+const SmallInput = styled(Input)`
+  width: 120px;
 `;
 
 const MiniTrack = styled.div`
@@ -947,6 +1462,16 @@ const SecondaryButton = styled.button`
   background: #fff;
   color: var(--text);
   padding: 14px 18px;
+  font-weight: 700;
+  cursor: pointer;
+`;
+
+const MiniAction = styled.button`
+  border: 1px solid #d7dbe4;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  padding: 10px 12px;
   font-weight: 700;
   cursor: pointer;
 `;

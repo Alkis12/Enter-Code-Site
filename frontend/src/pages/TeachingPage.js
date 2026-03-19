@@ -6,7 +6,7 @@ import Header from "../components/Header/Header";
 import { getDashboard } from "../api/account";
 import { getCurrentUserType, isAuthenticated } from "../api/auth";
 import { getCourseDetail, getMyCourses } from "../api/learning";
-import { getAttendanceSession, saveAttendanceSession } from "../api/teaching";
+import { listTeachingSessions, saveAttendanceSession } from "../api/teaching";
 
 function getTodayValue() {
   const now = new Date();
@@ -14,6 +14,27 @@ function getTodayValue() {
   const month = `${now.getMonth() + 1}`.padStart(2, "0");
   const day = `${now.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function shiftDate(value, delta) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  date.setDate(date.getDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateLabel(value) {
+  if (!value) return "Без даты";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
 }
 
 function formatDateTime(value) {
@@ -26,6 +47,31 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function buildSessionEditor(session, groupStudents) {
+  const entryMap = new Map((session.entries || []).map((entry) => [entry.student_id, entry]));
+  return {
+    sourceDate: session.date,
+    date: session.date,
+    original_date: session.original_date || "",
+    start_time: session.start_time || "",
+    end_time: session.end_time || "",
+    comment: session.comment || "",
+    is_cancelled: false,
+    entries: groupStudents.map((student) => {
+      const saved = entryMap.get(student.user_id);
+      return {
+        student_id: student.user_id,
+        name: student.name,
+        surname: student.surname,
+        tg_username: student.tg_username,
+        present: Boolean(saved?.present),
+        paid: Boolean(saved?.paid),
+        note: saved?.note || "",
+      };
+    }),
+  };
+}
+
 function TeachingPage() {
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
@@ -36,12 +82,13 @@ function TeachingPage() {
   const [courseDetail, setCourseDetail] = useState(null);
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [selectedDate, setSelectedDate] = useState(getTodayValue());
-  const [attendanceForm, setAttendanceForm] = useState({});
-  const [attendanceComment, setAttendanceComment] = useState("");
+  const [rangeFrom, setRangeFrom] = useState(shiftDate(getTodayValue(), -45));
+  const [rangeTo, setRangeTo] = useState(shiftDate(getTodayValue(), 45));
+  const [sessions, setSessions] = useState([]);
+  const [sessionEditor, setSessionEditor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [courseLoading, setCourseLoading] = useState(false);
-  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -54,8 +101,8 @@ function TeachingPage() {
           getDashboard(),
           getMyCourses(),
         ]);
-        setDashboard(dashboardResponse);
         const nextCourses = coursesResponse.courses || [];
+        setDashboard(dashboardResponse);
         setCourses(nextCourses);
         setSelectedCourseId((prev) => prev || nextCourses[0]?.id || "");
         setError("");
@@ -82,8 +129,8 @@ function TeachingPage() {
       try {
         setCourseLoading(true);
         const response = await getCourseDetail(selectedCourseId);
-        setCourseDetail(response);
         const groups = response.groups || [];
+        setCourseDetail(response);
         setSelectedGroupId((prev) =>
           groups.some((group) => group.id === prev) ? prev : groups[0]?.id || ""
         );
@@ -112,40 +159,31 @@ function TeachingPage() {
   }, [courseDetail, selectedGroup]);
 
   useEffect(() => {
-    const loadAttendance = async () => {
-      if (!selectedGroupId || !selectedDate) {
-        setAttendanceForm({});
-        setAttendanceComment("");
+    const loadSessions = async () => {
+      if (!selectedGroupId) {
+        setSessions([]);
         return;
       }
 
       try {
-        setAttendanceLoading(true);
-        const response = await getAttendanceSession(selectedGroupId, selectedDate);
-        const entriesMap = {};
-        (groupStudents || []).forEach((student) => {
-          const saved = (response.entries || []).find(
-            (entry) => entry.student_id === student.user_id
-          );
-          entriesMap[student.user_id] = {
-            present: Boolean(saved?.present),
-            note: saved?.note || "",
-          };
+        setSessionsLoading(true);
+        const response = await listTeachingSessions(selectedGroupId, {
+          date_from: rangeFrom,
+          date_to: rangeTo,
         });
-        setAttendanceForm(entriesMap);
-        setAttendanceComment(response.comment || "");
+        setSessions(response || []);
         setError("");
       } catch (err) {
-        setError(err.message || "Не удалось загрузить посещаемость");
+        setError(err.message || "Не удалось загрузить занятия группы");
       } finally {
-        setAttendanceLoading(false);
+        setSessionsLoading(false);
       }
     };
 
-    if (selectedGroupId && selectedDate && courseDetail) {
-      loadAttendance();
+    if (selectedGroupId) {
+      loadSessions();
     }
-  }, [selectedDate, selectedGroupId, groupStudents, courseDetail]);
+  }, [selectedGroupId, rangeFrom, rangeTo]);
 
   if (!authed) {
     return <Navigate to="/login" replace />;
@@ -158,33 +196,65 @@ function TeachingPage() {
   const pendingReviews = dashboard?.pending_reviews || [];
   const courseRequests = dashboard?.course_requests || [];
 
-  const handleAttendanceField = (studentId, field, value) => {
-    setAttendanceForm((prev) => ({
+  const handleSessionField = (field, value) => {
+    setSessionEditor((prev) => ({
       ...prev,
-      [studentId]: {
-        present: prev[studentId]?.present || false,
-        note: prev[studentId]?.note || "",
-        [field]: value,
-      },
+      [field]: value,
     }));
   };
 
-  const handleAttendanceSave = async () => {
-    if (!selectedGroupId || !selectedDate) return;
+  const handleSessionEntry = (studentId, field, value) => {
+    setSessionEditor((prev) => ({
+      ...prev,
+      entries: prev.entries.map((entry) =>
+        entry.student_id === studentId ? { ...entry, [field]: value } : entry
+      ),
+    }));
+  };
+
+  const openSessionEditor = (session) => {
+    setSessionEditor(buildSessionEditor(session, groupStudents));
+    setMessage("");
+    setError("");
+  };
+
+  const reloadSessions = async () => {
+    if (!selectedGroupId) {
+      return;
+    }
+    const response = await listTeachingSessions(selectedGroupId, {
+      date_from: rangeFrom,
+      date_to: rangeTo,
+    });
+    setSessions(response || []);
+  };
+
+  const handleSaveSession = async (isCancelled = false) => {
+    if (!selectedGroupId || !sessionEditor) {
+      return;
+    }
+
     try {
       setSaving(true);
-      await saveAttendanceSession(selectedGroupId, selectedDate, {
-        entries: groupStudents.map((student) => ({
-          student_id: student.user_id,
-          present: Boolean(attendanceForm[student.user_id]?.present),
-          note: attendanceForm[student.user_id]?.note || "",
+      await saveAttendanceSession(selectedGroupId, sessionEditor.sourceDate, {
+        date: sessionEditor.date,
+        start_time: sessionEditor.start_time || null,
+        end_time: sessionEditor.end_time || null,
+        comment: sessionEditor.comment,
+        is_cancelled: isCancelled,
+        entries: sessionEditor.entries.map((entry) => ({
+          student_id: entry.student_id,
+          present: entry.present,
+          paid: entry.paid,
+          note: entry.note,
         })),
-        comment: attendanceComment,
       });
-      setMessage("Посещаемость сохранена.");
+      await reloadSessions();
+      setSessionEditor(null);
+      setMessage(isCancelled ? "Занятие удалено." : "Занятие сохранено.");
       setError("");
     } catch (err) {
-      setError(err.message || "Не удалось сохранить посещаемость");
+      setError(err.message || "Не удалось сохранить занятие");
     } finally {
       setSaving(false);
     }
@@ -202,8 +272,8 @@ function TeachingPage() {
             <Eyebrow>Раздел преподавателя</Eyebrow>
             <Title>Занятия и проверка</Title>
             <HeroText>
-              Здесь собраны ручная проверка, заявки на курсы и посещаемость по группам
-              на конкретные даты.
+              Здесь собраны реальные занятия группы, их переносы, комментарии,
+              отметка посещаемости и оплата по разовым посещениям.
             </HeroText>
           </div>
           <HeroStats>
@@ -227,8 +297,7 @@ function TeachingPage() {
             <SectionCard>
               <SectionHeader>
                 <div>
-                  <SectionTitle>Посещаемость</SectionTitle>
-                  <SectionHint>Выберите курс, группу и дату, затем отметьте присутствие.</SectionHint>
+                  <SectionTitle>Занятия группы</SectionTitle>
                 </div>
               </SectionHeader>
 
@@ -267,81 +336,89 @@ function TeachingPage() {
                       </Select>
                     </Field>
                     <Field>
-                      <Label>Дата</Label>
+                      <Label>С</Label>
                       <Input
                         type="date"
-                        value={selectedDate}
-                        onChange={(event) => setSelectedDate(event.target.value)}
+                        value={rangeFrom}
+                        onChange={(event) => setRangeFrom(event.target.value)}
+                      />
+                    </Field>
+                    <Field>
+                      <Label>По</Label>
+                      <Input
+                        type="date"
+                        value={rangeTo}
+                        onChange={(event) => setRangeTo(event.target.value)}
                       />
                     </Field>
                   </FilterRow>
 
-                  {courseLoading || attendanceLoading ? (
-                    <EmptyState>Загрузка данных группы...</EmptyState>
+                  {courseLoading || sessionsLoading ? (
+                    <EmptyState>Загрузка занятий...</EmptyState>
                   ) : !selectedGroup ? (
                     <EmptyState>В этом курсе пока нет групп.</EmptyState>
-                  ) : groupStudents.length === 0 ? (
-                    <EmptyState>В выбранной группе пока нет учеников.</EmptyState>
                   ) : (
                     <>
-                      <AttendanceHeader>
-                        <div>
-                          <strong>{selectedGroup.name}</strong>
-                          {selectedGroup.schedule_summary && (
-                            <SectionHint>{selectedGroup.schedule_summary}</SectionHint>
-                          )}
-                        </div>
-                        <PrimaryButton type="button" onClick={handleAttendanceSave} disabled={saving}>
-                          {saving ? "Сохраняю..." : "Сохранить посещаемость"}
-                        </PrimaryButton>
-                      </AttendanceHeader>
+                      <GroupMetaCard>
+                        <strong>{selectedGroup.name}</strong>
+                        {selectedGroup.schedule_summary && (
+                          <SectionHint>{selectedGroup.schedule_summary}</SectionHint>
+                        )}
+                        <SectionHint>Учеников в группе: {groupStudents.length}</SectionHint>
+                      </GroupMetaCard>
 
-                      <AttendanceList>
-                        {groupStudents.map((student) => (
-                          <AttendanceRow key={student.user_id}>
-                            <StudentLine>
-                              <strong>{student.name} {student.surname}</strong>
-                              <span>@{student.tg_username}</span>
-                            </StudentLine>
-                            <ToggleWrap>
-                              <CheckInput
-                                type="checkbox"
-                                checked={Boolean(attendanceForm[student.user_id]?.present)}
-                                onChange={(event) =>
-                                  handleAttendanceField(
-                                    student.user_id,
-                                    "present",
-                                    event.target.checked
-                                  )
-                                }
-                              />
-                              <ToggleText>
-                                {attendanceForm[student.user_id]?.present ? "Был" : "Не был"}
-                              </ToggleText>
-                            </ToggleWrap>
-                            <NoteInput
-                              placeholder="Комментарий"
-                              value={attendanceForm[student.user_id]?.note || ""}
-                              onChange={(event) =>
-                                handleAttendanceField(
-                                  student.user_id,
-                                  "note",
-                                  event.target.value
-                                )
-                              }
-                            />
-                          </AttendanceRow>
-                        ))}
-                      </AttendanceList>
+                      {sessions.length === 0 ? (
+                        <EmptyState>В выбранном диапазоне занятий нет.</EmptyState>
+                      ) : (
+                        <SessionList>
+                          {sessions.map((session) => {
+                            const presentCount = (session.entries || []).filter(
+                              (entry) => entry.present
+                            ).length;
+                            const paidCount = (session.entries || []).filter(
+                              (entry) => entry.paid
+                            ).length;
 
-                      <Field>
-                        <Label>Комментарий к занятию</Label>
-                        <Textarea
-                          rows={4}
-                          value={attendanceComment}
-                          onChange={(event) => setAttendanceComment(event.target.value)}
-                        />
-                      </Field>
+                            return (
+                              <SessionCard key={`${session.original_date || session.date}:${session.date}`}>
+                                <SessionTop>
+                                  <div>
+                                    <SessionTitleLine>{formatDateLabel(session.date)}</SessionTitleLine>
+                                    <SessionMeta>
+                                      {(session.start_time || "00:00") +
+                                        (session.end_time ? `-${session.end_time}` : "")}
+                                    </SessionMeta>
+                                    {session.original_date && session.original_date !== session.date && (
+                                      <SessionMeta>
+                                        Перенесено с {formatDateLabel(session.original_date)}
+                                      </SessionMeta>
+                                    )}
+                                  </div>
+                                  <SecondaryButton
+                                    type="button"
+                                    onClick={() => openSessionEditor(session)}
+                                  >
+                                    Изменить
+                                  </SecondaryButton>
+                                </SessionTop>
+
+                                <SessionStats>
+                                  <SessionStat>
+                                    <span>Посещаемость</span>
+                                    <strong>{presentCount}/{groupStudents.length}</strong>
+                                  </SessionStat>
+                                  <SessionStat>
+                                    <span>Оплачено разово</span>
+                                    <strong>{paidCount}</strong>
+                                  </SessionStat>
+                                </SessionStats>
+
+                                {session.comment && <SessionComment>{session.comment}</SessionComment>}
+                              </SessionCard>
+                            );
+                          })}
+                        </SessionList>
+                      )}
                     </>
                   )}
                 </>
@@ -362,7 +439,9 @@ function TeachingPage() {
                   {pendingReviews.map((review) => (
                     <QueueItem key={`${review.task_id}:${review.student_user_id}`}>
                       <div>
-                        <strong>{review.student_name} {review.student_surname}</strong>
+                        <strong>
+                          {review.student_name} {review.student_surname}
+                        </strong>
                         <QueueMeta>{review.course_name} · {review.lesson_name}</QueueMeta>
                         <QueueMeta>{review.task_title} · попыток: {review.attempts}</QueueMeta>
                         <QueueMeta>
@@ -370,7 +449,7 @@ function TeachingPage() {
                         </QueueMeta>
                       </div>
                       <QueueLink to={`/mycourses/${review.course_id}/lessons/${review.lesson_id}`}>
-                        Открыть урок
+                        К уроку
                       </QueueLink>
                     </QueueItem>
                   ))}
@@ -397,6 +476,14 @@ function TeachingPage() {
                         {request.comment && <QueueMeta>{request.comment}</QueueMeta>}
                         <QueueMeta>{formatDateTime(request.created_at)}</QueueMeta>
                       </div>
+                      <QueueActions>
+                        <QueueLink to={`/courses/${request.course_id}`}>
+                          Публичная страница
+                        </QueueLink>
+                        <QueueLink to={`/mycourses/${request.course_id}`}>
+                          Внутренний курс
+                        </QueueLink>
+                      </QueueActions>
                     </QueueItem>
                   ))}
                 </Stack>
@@ -405,6 +492,122 @@ function TeachingPage() {
           </SideColumn>
         </Grid>
       </Content>
+
+      {sessionEditor && (
+        <ModalOverlay onClick={() => setSessionEditor(null)}>
+          <ModalCard onClick={(event) => event.stopPropagation()}>
+            <ModalHeader>
+              <div>
+                <SectionTitle>{formatDateLabel(sessionEditor.date)}</SectionTitle>
+                {sessionEditor.original_date &&
+                  sessionEditor.original_date !== sessionEditor.date && (
+                    <SectionHint>
+                      Перенос с {formatDateLabel(sessionEditor.original_date)}
+                    </SectionHint>
+                  )}
+              </div>
+              <IconButton type="button" onClick={() => setSessionEditor(null)}>
+                ×
+              </IconButton>
+            </ModalHeader>
+
+            <FilterRow>
+              <Field>
+                <Label>Дата</Label>
+                <Input
+                  type="date"
+                  value={sessionEditor.date}
+                  onChange={(event) => handleSessionField("date", event.target.value)}
+                />
+              </Field>
+              <Field>
+                <Label>Начало</Label>
+                <Input
+                  type="time"
+                  value={sessionEditor.start_time}
+                  onChange={(event) => handleSessionField("start_time", event.target.value)}
+                />
+              </Field>
+              <Field>
+                <Label>Конец</Label>
+                <Input
+                  type="time"
+                  value={sessionEditor.end_time}
+                  onChange={(event) => handleSessionField("end_time", event.target.value)}
+                />
+              </Field>
+            </FilterRow>
+
+            <Field>
+              <Label>Комментарий преподавателя</Label>
+              <Textarea
+                rows={3}
+                value={sessionEditor.comment}
+                onChange={(event) => handleSessionField("comment", event.target.value)}
+              />
+            </Field>
+
+            <AttendanceList>
+              {sessionEditor.entries.map((entry) => (
+                <AttendanceRow key={entry.student_id}>
+                  <StudentLine>
+                    <strong>
+                      {entry.name} {entry.surname}
+                    </strong>
+                    <span>@{entry.tg_username}</span>
+                  </StudentLine>
+
+                  <ToggleWrap>
+                    <CheckInput
+                      type="checkbox"
+                      checked={entry.present}
+                      onChange={(event) =>
+                        handleSessionEntry(entry.student_id, "present", event.target.checked)
+                      }
+                    />
+                    <ToggleText>Был</ToggleText>
+                  </ToggleWrap>
+
+                  <ToggleWrap>
+                    <CheckInput
+                      type="checkbox"
+                      checked={entry.paid}
+                      onChange={(event) =>
+                        handleSessionEntry(entry.student_id, "paid", event.target.checked)
+                      }
+                    />
+                    <ToggleText>Оплачено</ToggleText>
+                  </ToggleWrap>
+
+                  <NoteInput
+                    placeholder="Комментарий"
+                    value={entry.note}
+                    onChange={(event) =>
+                      handleSessionEntry(entry.student_id, "note", event.target.value)
+                    }
+                  />
+                </AttendanceRow>
+              ))}
+            </AttendanceList>
+
+            <ActionRow>
+              <DangerButton
+                type="button"
+                onClick={() => handleSaveSession(true)}
+                disabled={saving}
+              >
+                Удалить занятие
+              </DangerButton>
+              <SecondaryButton type="button" onClick={() => setSessionEditor(null)}>
+                Отмена
+              </SecondaryButton>
+              <PrimaryButton type="button" onClick={() => handleSaveSession(false)} disabled={saving}>
+                {saving ? "Сохраняю..." : "Сохранить"}
+              </PrimaryButton>
+            </ActionRow>
+          </ModalCard>
+        </ModalOverlay>
+      )}
     </Page>
   );
 }
@@ -536,10 +739,14 @@ const SectionHint = styled.p`
 
 const FilterRow = styled.div`
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 
-  @media (max-width: 760px) {
+  @media (max-width: 920px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @media (max-width: 620px) {
     grid-template-columns: 1fr;
   }
 `;
@@ -582,12 +789,68 @@ const Textarea = styled.textarea`
   background: #fff;
 `;
 
-const AttendanceHeader = styled.div`
+const GroupMetaCard = styled.div`
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
+  padding: 16px;
+`;
+
+const SessionList = styled.div`
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const SessionCard = styled.div`
+  border-radius: 20px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+`;
+
+const SessionTop = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
   flex-wrap: wrap;
+`;
+
+const SessionTitleLine = styled.h3`
+  font-size: 22px;
+`;
+
+const SessionMeta = styled.div`
+  color: var(--muted);
+  line-height: 1.5;
+`;
+
+const SessionStats = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+`;
+
+const SessionStat = styled.div`
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid #e6ebf2;
+  padding: 12px 14px;
+
+  span {
+    display: block;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+`;
+
+const SessionComment = styled.div`
+  color: var(--muted);
+  line-height: 1.6;
 `;
 
 const AttendanceList = styled.div`
@@ -598,7 +861,7 @@ const AttendanceList = styled.div`
 
 const AttendanceRow = styled.div`
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 120px 140px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding: 14px;
@@ -606,7 +869,7 @@ const AttendanceRow = styled.div`
   background: #f8fafc;
   border: 1px solid #e6ebf2;
 
-  @media (max-width: 760px) {
+  @media (max-width: 920px) {
     grid-template-columns: 1fr;
   }
 `;
@@ -651,6 +914,27 @@ const PrimaryButton = styled.button`
   cursor: pointer;
 `;
 
+const SecondaryButton = styled.button`
+  border: 1px solid #d8dee8;
+  border-radius: 14px;
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 700;
+  background: #fff;
+  cursor: pointer;
+`;
+
+const DangerButton = styled.button`
+  border: none;
+  border-radius: 14px;
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 800;
+  background: #f05d5d;
+  color: #fff;
+  cursor: pointer;
+`;
+
 const CountBadge = styled.div`
   min-width: 42px;
   height: 42px;
@@ -676,6 +960,12 @@ const QueueItem = styled.div`
   display: flex;
   flex-direction: column;
   gap: 10px;
+`;
+
+const QueueActions = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 `;
 
 const QueueMeta = styled.div`
@@ -706,4 +996,55 @@ const EmptyState = styled.div`
   border-radius: 18px;
   background: #f8fafc;
   color: var(--muted);
+`;
+
+const ModalOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 25, 37, 0.46);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+`;
+
+const ModalCard = styled.div`
+  width: min(1080px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 28px;
+  border: 1px solid #e8ebf2;
+  box-shadow: 0 28px 80px rgba(19, 24, 34, 0.2);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+`;
+
+const ModalHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+`;
+
+const IconButton = styled.button`
+  width: 44px;
+  height: 44px;
+  border: 1px solid #d7dbe4;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+`;
+
+const ActionRow = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 6px;
 `;

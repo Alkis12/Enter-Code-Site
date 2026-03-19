@@ -1,5 +1,11 @@
 import { api } from "./client";
 
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8002";
+
+function getToken() {
+  return localStorage.getItem("access_token");
+}
+
 export async function getMyCourses() {
   return api("/course/my");
 }
@@ -17,6 +23,37 @@ export async function createCourse(payload) {
     method: "POST",
     body: payload,
   });
+}
+
+export async function uploadCourseCover(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const headers = {};
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_URL}/course/upload-cover`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const msg = (data && (data.detail || data.message)) || res.statusText;
+    throw new Error(msg);
+  }
+  return data;
 }
 
 export async function updateCourse(courseId, payload) {
@@ -107,6 +144,13 @@ export async function deleteTask(taskId) {
 
 export async function submitTask(taskId, payload) {
   return api(`/task/${taskId}/submit`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function runTaskCode(taskId, payload) {
+  return api(`/task/${taskId}/run`, {
     method: "POST",
     body: payload,
   });

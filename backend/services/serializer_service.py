@@ -2,9 +2,11 @@ from datetime import datetime
 from typing import List, Optional
 
 from models.achievement import Achievement
+from models.attendance import AttendanceSession
 from models.course import Course
 from models.course_request import CourseRequest
 from models.group import Group
+from models.news_article import NewsArticle
 from models.task import Task, TaskStatus, TaskSubmission
 from models.topic import Topic
 from models.user import User, UserType
@@ -17,10 +19,13 @@ from schemas.responses import (
     DashboardPendingReviewResponse,
     GroupOptionResponse,
     GroupResponse,
+    LinkedParentResponse,
     LeaderboardEntryResponse,
+    NewsArticleResponse,
     PendingTaskReviewResponse,
     CourseRequestResponse,
     StudentAdminResponse,
+    StudentCourseAttendanceResponse,
     StudentCourseProgressResponse,
     TaskResponse,
     TaskResultResponse,
@@ -37,6 +42,8 @@ from services.learning_service import (
     get_groups_for_course,
     get_student_group_assignments,
 )
+from services.billing_service import build_course_finance_snapshot
+from services.user_service import get_parents_for_student
 
 
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -94,7 +101,32 @@ def build_group_schedule_summary(group: Group) -> str:
     return " · ".join(parts)
 
 
-def serialize_group(group: Group) -> GroupResponse:
+async def build_group_leaderboard(course: Course, group: Group) -> List[LeaderboardEntryResponse]:
+    leaderboard: List[LeaderboardEntryResponse] = []
+    for student_id in group.students:
+        user = await User.get(student_id)
+        if not user:
+            continue
+        leaderboard.append(
+            LeaderboardEntryResponse(
+                user_id=str(user.id),
+                name=user.name,
+                surname=user.surname,
+                tg_username=user.tg_username,
+                points=await course.get_user_points(str(user.id)),
+                progress_percent=await course.get_user_success_percent(str(user.id)),
+            )
+        )
+    leaderboard.sort(key=lambda item: (-item.points, item.surname, item.name))
+    return leaderboard
+
+
+async def serialize_group(group: Group, course: Optional[Course] = None) -> GroupResponse:
+    current_topic_name = None
+    if group.current_topic_id:
+        topic = await Topic.get(group.current_topic_id)
+        if topic:
+            current_topic_name = topic.name
     return GroupResponse(
         id=str(group.id),
         course_id=group.course_id,
@@ -103,6 +135,9 @@ def serialize_group(group: Group) -> GroupResponse:
         teachers=group.teachers,
         schedule_slots=group.schedule_slots,
         schedule_summary=build_group_schedule_summary(group),
+        current_topic_id=group.current_topic_id,
+        current_topic_name=current_topic_name,
+        leaderboard=await build_group_leaderboard(course, group) if course else [],
         total_students=len(group.students),
     )
 
@@ -119,9 +154,11 @@ async def serialize_course(course: Course, user: Optional[User] = None) -> Cours
     active_group_id = None
     active_group_name = None
     active_group_schedule_summary = ""
-    if user:
+    finance = None
+    if user and user.user_type == UserType.STUDENT:
         earned_points = await course.get_user_points(str(user.id))
         progress_percent = await course.get_user_success_percent(str(user.id))
+    if user:
         editable = await can_edit_course(user, course)
         if user.user_type == UserType.STUDENT:
             assignments = await get_student_group_assignments(str(user.id))
@@ -130,6 +167,7 @@ async def serialize_course(course: Course, user: Optional[User] = None) -> Cours
                 active_group_id = str(active_group.id)
                 active_group_name = active_group.name
                 active_group_schedule_summary = build_group_schedule_summary(active_group)
+                finance = await build_course_finance_snapshot(str(user.id), course, active_group)
     return CourseResponse(
         id=str(course.id),
         name=course.name,
@@ -154,6 +192,7 @@ async def serialize_course(course: Course, user: Optional[User] = None) -> Cours
         progress_percent=progress_percent,
         earned_points=earned_points,
         can_edit=editable,
+        finance=finance,
     )
 
 
@@ -429,6 +468,53 @@ def serialize_course_member(user: User) -> CourseMemberResponse:
     )
 
 
+def serialize_linked_parent(user: User) -> LinkedParentResponse:
+    return LinkedParentResponse(
+        user_id=str(user.id),
+        name=user.name,
+        surname=user.surname,
+        tg_username=user.tg_username,
+        telegram_id=user.telegram_id,
+        phone=user.phone,
+    )
+
+
+async def build_student_course_attendance_snapshot(
+    student_id: str,
+    course_id: str,
+    group: Optional[Group],
+) -> StudentCourseAttendanceResponse:
+    if not group:
+        return StudentCourseAttendanceResponse()
+
+    sessions = await AttendanceSession.find(
+        AttendanceSession.course_id == course_id,
+        AttendanceSession.group_id == str(group.id),
+        AttendanceSession.is_cancelled == False,
+    ).to_list()
+
+    total_sessions = 0
+    attended_sessions = 0
+    paid_sessions = 0
+    for session in sessions:
+        entry = next((item for item in session.entries if item.student_id == student_id), None)
+        if not entry:
+            continue
+        total_sessions += 1
+        if entry.present:
+            attended_sessions += 1
+        if entry.paid:
+            paid_sessions += 1
+
+    attendance_percent = round(attended_sessions / total_sessions * 100, 2) if total_sessions else 0.0
+    return StudentCourseAttendanceResponse(
+        total_sessions=total_sessions,
+        attended_sessions=attended_sessions,
+        paid_sessions=paid_sessions,
+        attendance_percent=attendance_percent,
+    )
+
+
 async def serialize_student_admin(student: User, courses: List[Course]) -> StudentAdminResponse:
     course_progress: List[StudentCourseProgressResponse] = []
     total_points = 0
@@ -436,6 +522,7 @@ async def serialize_student_admin(student: User, courses: List[Course]) -> Stude
     assignments = await get_student_group_assignments(str(student.id))
     course_group_ids = {course_id: str(group.id) for course_id, group in assignments.items()}
     course_group_names = {course_id: group.name for course_id, group in assignments.items()}
+    parents = await get_parents_for_student(str(student.id))
 
     for course in courses:
         course_id = str(course.id)
@@ -454,6 +541,16 @@ async def serialize_student_admin(student: User, courses: List[Course]) -> Stude
                 progress_percent=round(course_earned_points / course_total_points * 100, 2)
                 if course_total_points
                 else 0.0,
+                finance=await build_course_finance_snapshot(
+                    str(student.id),
+                    course,
+                    assignments.get(course_id),
+                ),
+                attendance=await build_student_course_attendance_snapshot(
+                    str(student.id),
+                    course_id,
+                    assignments.get(course_id),
+                ),
             )
         )
 
@@ -475,6 +572,7 @@ async def serialize_student_admin(student: User, courses: List[Course]) -> Stude
         total_points=total_points,
         progress_percent=progress_percent,
         course_progress=course_progress,
+        parents=[serialize_linked_parent(parent) for parent in parents],
     )
 
 
@@ -487,4 +585,22 @@ def serialize_course_request(item: CourseRequest) -> CourseRequestResponse:
         contact_value=item.contact_value,
         comment=item.comment,
         created_at=item.created_at,
+    )
+
+
+def serialize_news_article(
+    article: NewsArticle,
+    editable: bool = False,
+) -> NewsArticleResponse:
+    return NewsArticleResponse(
+        id=str(article.id),
+        slug=article.slug,
+        title=article.title,
+        intro=article.intro,
+        preview=article.preview,
+        body=article.body,
+        is_published=article.is_published,
+        created_at=article.created_at,
+        updated_at=article.updated_at,
+        editable=editable,
     )

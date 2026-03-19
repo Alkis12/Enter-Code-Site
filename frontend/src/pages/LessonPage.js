@@ -3,12 +3,14 @@ import styled from "styled-components";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { useAchievementToasts } from "../components/AchievementToastProvider";
+import CodeEditor from "../components/CodeEditor";
 import Header from "../components/Header/Header";
 import { isAuthenticated } from "../api/auth";
 import {
   createTask,
   deleteTask,
   getLessonDetail,
+  runTaskCode,
   reviewTaskSubmission,
   submitTask,
   updateLesson,
@@ -31,12 +33,13 @@ const statusMetaMap = {
   no_attempts: {
     label: "Нет попыток",
     tone: "neutral",
-    description: "Решение еще не отправлялось.",
+    description: "Решение еще не отправлялось. Можно сначала проверить код на своих данных.",
   },
   wrong_answer: {
     label: "Есть ошибки",
     tone: "warning",
-    description: "Автотесты не пройдены. Исправьте решение и отправьте еще раз.",
+    description:
+      "Последняя отправка не прошла автопроверку. Посмотрите отчет по тестам, исправьте код и отправьте еще раз.",
   },
   pending_review: {
     label: "Ждет ручной проверки",
@@ -50,6 +53,31 @@ const statusMetaMap = {
     description: "Баллы начислены, задача засчитана.",
   },
 };
+
+function getDraftStorageKey(taskId) {
+  return `enter-code-task-draft:${taskId}`;
+}
+
+function readDraftCode(taskId) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem(getDraftStorageKey(taskId));
+}
+
+function writeDraftCode(taskId, code) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(getDraftStorageKey(taskId), code);
+}
+
+function clearDraftCode(taskId) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(getDraftStorageKey(taskId));
+}
 
 function createTaskEditor(task) {
   return {
@@ -114,13 +142,23 @@ function getLessonRailFillPercent(currentIndex, totalCount) {
 }
 
 function getLessonRailStatusLabel(lesson, index) {
-  if (lesson.is_open) {
-    return "Открыт";
-  }
-  if (index === 0) {
+  if (lesson.can_access && index === 0) {
     return "Старт";
   }
-  return "Закрыт";
+  if (lesson.can_access) {
+    return "Доступен";
+  }
+  if (index === 0) {
+    return "Открывается первым";
+  }
+  return "Откроется позже";
+}
+
+function getRunResultTone(runResult) {
+  if (!runResult) {
+    return "neutral";
+  }
+  return runResult.success ? "success" : "warning";
 }
 
 function TestReport({ testResults }) {
@@ -229,10 +267,11 @@ function TaskEditorFields({
       </SubCard>
       <Field>
         <Label>Стартовый код</Label>
-        <Textarea
-          rows={6}
+        <CodeEditor
           value={form.starter_code}
-          onChange={(event) => onFieldChange("starter_code", event.target.value)}
+          onChange={(value) => onFieldChange("starter_code", value)}
+          language={form.language || "python"}
+          minHeight={220}
         />
       </Field>
       <Field>
@@ -291,6 +330,8 @@ function LessonPage() {
   const [newTask, setNewTask] = useState(emptyTaskForm);
   const [taskEditors, setTaskEditors] = useState({});
   const [studentCodes, setStudentCodes] = useState({});
+  const [taskRunInputs, setTaskRunInputs] = useState({});
+  const [taskRunResults, setTaskRunResults] = useState({});
   const [reviewForms, setReviewForms] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({});
   const [showMaterialEditor, setShowMaterialEditor] = useState(false);
@@ -308,11 +349,18 @@ function LessonPage() {
         const response = await getLessonDetail(lessonId);
         const nextEditors = {};
         const nextCodes = {};
+        const nextRunInputs = {};
+        const nextRunResults = {};
         const nextReviewForms = {};
         (response.tasks || []).forEach((task) => {
           nextEditors[task.id] = createTaskEditor(task);
           nextCodes[task.id] =
-            task.result?.last_submission?.code || task.starter_code || "";
+            readDraftCode(task.id) ??
+            task.result?.last_submission?.code ??
+            task.starter_code ??
+            "";
+          nextRunInputs[task.id] = "";
+          nextRunResults[task.id] = null;
           (task.pending_reviews || []).forEach((review) => {
             nextReviewForms[`${task.id}:${review.user_id}`] =
               review.review_comment ||
@@ -326,10 +374,11 @@ function LessonPage() {
           description: response.lesson.description || "",
           content: response.lesson.content || "",
           resources: (response.lesson.resources || []).join("\n"),
-          order: response.lesson.order || 0,
         });
         setTaskEditors(nextEditors);
         setStudentCodes(nextCodes);
+        setTaskRunInputs(nextRunInputs);
+        setTaskRunResults(nextRunResults);
         setReviewForms(nextReviewForms);
         setExpandedTasks((prev) => {
           const nextState = {};
@@ -364,6 +413,12 @@ function LessonPage() {
     });
   }, [lessonId, data?.course_lessons]);
 
+  useEffect(() => {
+    Object.entries(studentCodes).forEach(([taskId, code]) => {
+      writeDraftCode(taskId, code || "");
+    });
+  }, [studentCodes]);
+
   const runAction = async (key, action) => {
     setBusyKey(key);
     setError("");
@@ -396,6 +451,13 @@ function LessonPage() {
 
   const updateNewTaskField = (field, value) => {
     setNewTask((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateStudentCode = (taskId, value) => {
+    setStudentCodes((prev) => ({
+      ...prev,
+      [taskId]: value,
+    }));
   };
 
   const updateTaskTestField = (taskId, index, field, value) => {
@@ -459,6 +521,17 @@ function LessonPage() {
     }));
   };
 
+  const handleResetTaskCode = (task) => {
+    const nextCode = task.starter_code || "";
+    clearDraftCode(task.id);
+    updateStudentCode(task.id, nextCode);
+    setTaskRunResults((prev) => ({
+      ...prev,
+      [task.id]: null,
+    }));
+    setNotice("Черновик сброшен к стартовому коду.");
+  };
+
   if (!authed) return <Navigate to="/login" replace />;
 
   if (loading) {
@@ -506,21 +579,10 @@ function LessonPage() {
           .split("\n")
           .map((item) => item.trim())
           .filter(Boolean),
-        order: Number(lessonForm.order || 0),
       });
       setNotice("Материал урока обновлен.");
       await loadLesson({ showLoader: false });
       setShowMaterialEditor(false);
-    });
-  };
-
-  const toggleLessonAccess = async () => {
-    await runAction("lesson-access", async () => {
-      await updateLesson(lessonId, { is_open: !lesson.is_open });
-      setNotice(
-        !lesson.is_open ? "Урок открыт для учеников." : "Урок закрыт для учеников."
-      );
-      await loadLesson({ showLoader: false });
     });
   };
 
@@ -580,6 +642,11 @@ function LessonPage() {
   };
 
   const handleSubmitSolution = async (taskId) => {
+    if (!(studentCodes[taskId] || "").trim()) {
+      setNotice("");
+      setError("Сначала напишите решение, затем отправляйте его на проверку.");
+      return;
+    }
     await runAction(`submit-${taskId}`, async () => {
       const response = await submitTask(taskId, {
         code: studentCodes[taskId] || "",
@@ -587,6 +654,31 @@ function LessonPage() {
       pushAchievements(response.newly_unlocked_achievements || []);
       setNotice("Решение отправлено на проверку.");
       await loadLesson({ showLoader: false });
+    });
+  };
+
+  const handleRunTaskCode = async (taskId) => {
+    if (!(studentCodes[taskId] || "").trim()) {
+      setNotice("");
+      setError("Сначала напишите код, затем запускайте его на своих данных.");
+      return;
+    }
+    await runAction(`run-${taskId}`, async () => {
+      const response = await runTaskCode(taskId, {
+        code: studentCodes[taskId] || "",
+        input_data: taskRunInputs[taskId] || "",
+      });
+      setTaskRunResults((prev) => ({
+        ...prev,
+        [taskId]: response,
+      }));
+      setNotice(
+        response.success
+          ? "Локальный запуск завершен."
+          : response.timed_out
+          ? "Локальный запуск остановлен по тайм-ауту."
+          : "Локальный запуск завершился с ошибкой."
+      );
     });
   };
 
@@ -694,17 +786,6 @@ function LessonPage() {
                 >
                   {showMaterialEditor ? "Закрыть настройки" : "⚙ Настроить урок"}
                 </SecondaryButton>
-                <SecondaryButton
-                  type="button"
-                  disabled={busyKey === "lesson-access"}
-                  onClick={toggleLessonAccess}
-                >
-                  {busyKey === "lesson-access"
-                    ? "Сохраняю..."
-                    : lesson.is_open
-                    ? "Закрыть урок"
-                    : "Открыть урок"}
-                </SecondaryButton>
                 <PrimaryButton
                   type="button"
                   onClick={() => setShowCreateTask((prev) => !prev)}
@@ -762,20 +843,6 @@ function LessonPage() {
                     }
                   />
                 </Field>
-                <Field>
-                  <Label>Порядок урока в курсе</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={lessonForm.order}
-                    onChange={(event) =>
-                      setLessonForm((prev) => ({
-                        ...prev,
-                        order: event.target.value,
-                      }))
-                    }
-                  />
-                </Field>
               </Grid2>
             </>
           ) : (
@@ -822,14 +889,6 @@ function LessonPage() {
               </TaskSwitchGrid>
             )}
           </div>
-          {canEdit && (
-            <PrimaryButton
-              type="button"
-              onClick={() => setShowCreateTask((prev) => !prev)}
-            >
-              {showCreateTask ? "Скрыть форму" : "Добавить задачу"}
-            </PrimaryButton>
-          )}
         </Row>
         {canEdit && showCreateTask && (
           <Card as="form" onSubmit={handleTaskCreate}>
@@ -857,6 +916,7 @@ function LessonPage() {
             const isSolved = result?.status === "correct";
             const isExpanded = Boolean(expandedTasks[task.id]);
             const isEditingTask = editingTaskId === task.id;
+            const runResult = taskRunResults[task.id];
             const attemptsToShow =
               submissionHistory.length > 0
                 ? submissionHistory
@@ -1032,68 +1092,137 @@ function LessonPage() {
                       </>
                     ) : (
                       <>
-                        {result && (
-                          <ResultSummaryCard $tone={statusMeta.tone}>
-                            <Row>
-                              <Badge $tone={statusMeta.tone}>{statusMeta.label}</Badge>
-                              <MutedText>Попыток: {result.attempts}</MutedText>
-                            </Row>
-                            <MutedText>{statusMeta.description}</MutedText>
-                            <ResultFacts>
+                        <ResultSummaryCard $tone={statusMeta.tone}>
+                          <Row>
+                            <Badge $tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                            <MutedText>
+                              Попыток: {result?.attempts || 0}
+                            </MutedText>
+                          </Row>
+                          <MutedText>{statusMeta.description}</MutedText>
+                          <ResultFacts>
+                            <ResultFact>
+                              <span>Баллы</span>
+                              <strong>
+                                {result?.score || 0} / {task.points}
+                              </strong>
+                            </ResultFact>
+                            {task.requires_manual_review && (
                               <ResultFact>
-                                <span>Баллы</span>
+                                <span>Проверка</span>
                                 <strong>
-                                  {result.score} / {task.points}
+                                  {result?.reviewed_at
+                                    ? formatDateTime(result.reviewed_at)
+                                    : result?.status === "pending_review"
+                                    ? "Ждет преподавателя"
+                                    : "Пока не требуется"}
                                 </strong>
                               </ResultFact>
-                              {task.requires_manual_review && (
-                                <ResultFact>
-                                  <span>Проверка</span>
-                                  <strong>
-                                    {result.reviewed_at
-                                      ? formatDateTime(result.reviewed_at)
-                                      : "Ждет преподавателя"}
-                                  </strong>
-                                </ResultFact>
-                              )}
-                              {lastSubmission && (
-                                <ResultFact>
-                                  <span>Тесты</span>
-                                  <strong>
-                                    {lastSubmission.passed_tests}/
-                                    {lastSubmission.total_tests}
-                                  </strong>
-                                </ResultFact>
-                              )}
-                            </ResultFacts>
-                            {result.review_comment && (
-                              <SubCard>{result.review_comment}</SubCard>
                             )}
-                          </ResultSummaryCard>
-                        )}
+                            <ResultFact>
+                              <span>Тесты</span>
+                              <strong>
+                                {lastSubmission
+                                  ? `${lastSubmission.passed_tests}/${lastSubmission.total_tests}`
+                                  : "Еще нет отправок"}
+                              </strong>
+                            </ResultFact>
+                          </ResultFacts>
+                          {result?.review_comment && (
+                            <SubCard>{result.review_comment}</SubCard>
+                          )}
+                        </ResultSummaryCard>
                         <Field>
                           <Label>Ваше решение</Label>
-                          <CodeArea
-                            rows={14}
+                          <CodeEditor
                             value={studentCodes[task.id] || ""}
-                            onChange={(event) =>
-                              setStudentCodes((prev) => ({
-                                ...prev,
-                                [task.id]: event.target.value,
-                              }))
-                            }
+                            onChange={(value) => updateStudentCode(task.id, value)}
+                            language={task.language || "python"}
                             placeholder="Напишите решение на Python"
                           />
+                          <MutedText>
+                            Черновик сохраняется локально в браузере автоматически.
+                          </MutedText>
                         </Field>
-                        <PrimaryButton
-                          type="button"
-                          onClick={() => handleSubmitSolution(task.id)}
-                          disabled={busyKey === `submit-${task.id}`}
-                        >
-                          {busyKey === `submit-${task.id}`
-                            ? "Отправляю..."
-                            : "Отправить на проверку"}
-                        </PrimaryButton>
+                        <SubCard>
+                          <Stack>
+                            <strong>Проверка на своих данных</strong>
+                            <MutedText>
+                              Этот запуск не отправляет решение преподавателю и не
+                              сохраняет попытку.
+                            </MutedText>
+                            <Field>
+                              <Label>Свои входные данные</Label>
+                              <Textarea
+                                rows={4}
+                                value={taskRunInputs[task.id] || ""}
+                                onChange={(event) =>
+                                  setTaskRunInputs((prev) => ({
+                                    ...prev,
+                                    [task.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Введите данные так, как программа получит их через input()"
+                              />
+                            </Field>
+                            <ButtonRow>
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => handleRunTaskCode(task.id)}
+                                disabled={busyKey === `run-${task.id}`}
+                              >
+                                {busyKey === `run-${task.id}`
+                                  ? "Запускаю..."
+                                  : "Запустить на своих данных"}
+                              </SecondaryButton>
+                              <GhostButton
+                                type="button"
+                                onClick={() => handleResetTaskCode(task)}
+                              >
+                                Сбросить к шаблону
+                              </GhostButton>
+                              <PrimaryButton
+                                type="button"
+                                onClick={() => handleSubmitSolution(task.id)}
+                                disabled={busyKey === `submit-${task.id}`}
+                              >
+                                {busyKey === `submit-${task.id}`
+                                  ? "Отправляю..."
+                                  : "Отправить на проверку"}
+                              </PrimaryButton>
+                            </ButtonRow>
+                            {runResult && (
+                              <ResultSummaryCard $tone={getRunResultTone(runResult)}>
+                                <Row>
+                                  <Badge $tone={getRunResultTone(runResult)}>
+                                    {runResult.success
+                                      ? "Запуск успешен"
+                                      : runResult.timed_out
+                                      ? "Тайм-аут"
+                                      : "Ошибка запуска"}
+                                  </Badge>
+                                  <MutedText>
+                                    Код возврата: {runResult.exit_code}
+                                  </MutedText>
+                                </Row>
+                                <MiniGrid>
+                                  <CodeBlock>
+                                    <span>Входные данные</span>
+                                    <code>{runResult.input_data || "пусто"}</code>
+                                  </CodeBlock>
+                                  <CodeBlock>
+                                    <span>stdout</span>
+                                    <code>{runResult.stdout || "пусто"}</code>
+                                  </CodeBlock>
+                                  <CodeBlock>
+                                    <span>stderr</span>
+                                    <code>{runResult.stderr || "пусто"}</code>
+                                  </CodeBlock>
+                                </MiniGrid>
+                              </ResultSummaryCard>
+                            )}
+                          </Stack>
+                        </SubCard>
                         {result && (
                           <BottomScoreCard>
                             <strong>Баллы по задаче</strong>
@@ -1491,18 +1620,6 @@ const Textarea = styled.textarea`
   padding: 13px 14px;
   background: #fff;
   resize: vertical;
-`;
-
-const CodeArea = styled.textarea`
-  width: 100%;
-  border: 1px solid #1d2230;
-  border-radius: 18px;
-  padding: 16px;
-  background: #141925;
-  color: #edf1ff;
-  resize: vertical;
-  font-family: "JetBrains Mono", monospace;
-  line-height: 1.6;
 `;
 
 const CodePreview = styled.pre`
