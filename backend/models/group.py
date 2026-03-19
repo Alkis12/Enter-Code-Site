@@ -17,6 +17,7 @@ class Group(Document):
     teachers: List[str] = Field(default_factory=list)
     description: str = Field(default="")
     schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
+    current_topic_id: Optional[str] = Field(default=None)
 
     async def get_total_students(self) -> int:
         return len(self.students)

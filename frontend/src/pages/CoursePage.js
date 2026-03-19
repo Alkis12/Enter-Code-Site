@@ -2,17 +2,20 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
-import Header from "../components/Header/Header";
+import { listStudents } from "../api/account";
 import { isAuthenticated } from "../api/auth";
 import {
   createCourseGroup,
   createLesson,
   deleteCourseGroup,
   getCourseDetail,
+  uploadCourseCover,
   updateCourse,
   updateCourseGroup,
   updateLesson,
 } from "../api/learning";
+import Header from "../components/Header/Header";
+import ImageUploadControl from "../components/ImageUploadControl";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8002";
 const EMPTY_LIST = [];
@@ -26,12 +29,6 @@ const weekdayOptions = [
   { value: 5, label: "Сб" },
   { value: 6, label: "Вс" },
 ];
-
-const emptyGroupEditor = {
-  name: "",
-  student_ids: [],
-  schedule_slots: [],
-};
 
 function resolveAssetUrl(url) {
   if (!url) return "";
@@ -49,10 +46,65 @@ function moveItemToIndex(list, fromId, targetIndex) {
   return next;
 }
 
-function getLessonStatusLabel(lesson, index) {
-  if (lesson.is_open) return "Открыт";
-  if (index === 0) return "Старт";
+function normalizeSlots(slots) {
+  return (slots || []).map((slot) => ({
+    weekday: Number(slot.weekday ?? 0),
+    start_time: slot.start_time || "",
+    end_time: slot.end_time || "",
+  }));
+}
+
+function sanitizeScheduleSlots(slots) {
+  return (slots || [])
+    .filter((slot) => slot && slot.start_time)
+    .map((slot) => ({
+      weekday: Number(slot.weekday ?? 0),
+      start_time: slot.start_time,
+      end_time: slot.end_time || null,
+    }))
+    .sort((a, b) => {
+      if (a.weekday !== b.weekday) return a.weekday - b.weekday;
+      if (a.start_time !== b.start_time) return a.start_time.localeCompare(b.start_time);
+      return (a.end_time || "").localeCompare(b.end_time || "");
+    });
+}
+
+function buildSlotLabel(slot) {
+  const day = weekdayOptions.find((item) => item.value === Number(slot.weekday))?.label || "Пн";
+  if (slot.start_time && slot.end_time) return `${day} ${slot.start_time}-${slot.end_time}`;
+  if (slot.start_time) return `${day} ${slot.start_time}`;
+  return day;
+}
+
+function getLessonStatusLabel(lesson, index, isStudent) {
+  if (!isStudent) return `${lesson.total_tasks || 0} задач`;
+  if (lesson.can_access && index === 0) return "Старт";
+  if (lesson.can_access) return "Доступен";
   return "Закрыт";
+}
+
+function getLessonAccessHint(lesson, index, orderedLessons, canEdit) {
+  if (canEdit) {
+    return lesson.description || "Тема пока без описания.";
+  }
+  if (lesson.can_access) {
+    return lesson.description || "Урок уже доступен для прохождения.";
+  }
+  const previousLesson = orderedLessons[index - 1];
+  if (previousLesson) {
+    return `Сначала откройте или пройдите предыдущий урок: ${previousLesson.name}.`;
+  }
+  return "Урок пока закрыт для вашей группы.";
+}
+
+function createGroupEditor(group) {
+  return {
+    id: group.id,
+    name: group.name || "",
+    student_ids: [...(group.students || [])],
+    schedule_slots: normalizeSlots(group.schedule_slots),
+    current_topic_id: group.current_topic_id || "",
+  };
 }
 
 function CoursePage() {
@@ -70,7 +122,16 @@ function CoursePage() {
   const [orderedLessons, setOrderedLessons] = useState([]);
   const [draggedLessonId, setDraggedLessonId] = useState("");
   const [dropTargetIndex, setDropTargetIndex] = useState(null);
-  const [groupEditors, setGroupEditors] = useState({});
+  const [groupEditor, setGroupEditor] = useState(null);
+  const [visibilityGroupId, setVisibilityGroupId] = useState("");
+  const [visibilityTopicId, setVisibilityTopicId] = useState("");
+  const [studentPickerOpen, setStudentPickerOpen] = useState(false);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [allStudents, setAllStudents] = useState([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [activeTab, setActiveTab] = useState("lessons");
+  const [selectedRatingGroupId, setSelectedRatingGroupId] = useState("");
 
   const applyCourseResponse = useCallback((response) => {
     setData(response);
@@ -82,16 +143,13 @@ function CoursePage() {
       cover_image: response.course.cover_image || "",
     });
     setOrderedLessons(response.lessons || []);
-    setGroupEditors(
-      (response.groups || []).reduce((acc, group) => {
-        acc[group.id] = {
-          name: group.name || "",
-          student_ids: [...(group.students || [])],
-          schedule_slots: (group.schedule_slots || []).map((slot) => ({ ...slot })),
-        };
-        return acc;
-      }, {})
-    );
+    setSelectedRatingGroupId((prev) => {
+      const groupIds = (response.groups || []).map((group) => group.id);
+      if (response.course.active_group_id && groupIds.includes(response.course.active_group_id)) {
+        return response.course.active_group_id;
+      }
+      return groupIds.includes(prev) ? prev : groupIds[0] || "";
+    });
   }, []);
 
   const loadCourse = useCallback(async () => {
@@ -114,17 +172,37 @@ function CoursePage() {
   const course = data?.course;
   const groups = data?.groups || EMPTY_LIST;
   const students = data?.students || EMPTY_LIST;
-  const leaderboard = data?.leaderboard || EMPTY_LIST;
   const canEdit = course?.can_edit;
+  const isStudent = course && !canEdit;
 
-  const studentNameById = useMemo(
-    () =>
-      students.reduce((acc, student) => {
-        acc[student.user_id] = `${student.name} ${student.surname}`.trim();
-        return acc;
-      }, {}),
-    [students]
+  const ratingGroups = useMemo(() => {
+    if (!course) return [];
+    if (canEdit) return groups;
+    return groups.filter((group) => group.id === course.active_group_id);
+  }, [canEdit, course, groups]);
+
+  const selectedRatingGroup = useMemo(
+    () => ratingGroups.find((group) => group.id === selectedRatingGroupId) || ratingGroups[0] || null,
+    [ratingGroups, selectedRatingGroupId]
   );
+
+  const selectedEditorStudents = useMemo(() => {
+    if (!groupEditor) return [];
+    const ids = new Set(groupEditor.student_ids || []);
+    return allStudents.filter((student) => ids.has(student.user_id));
+  }, [allStudents, groupEditor]);
+
+  const filteredStudentOptions = useMemo(() => {
+    if (!groupEditor) return [];
+    const query = studentSearch.trim().toLowerCase();
+    const selectedIds = new Set(groupEditor.student_ids || []);
+    return allStudents.filter((student) => {
+      if (selectedIds.has(student.user_id)) return false;
+      if (!query) return true;
+      const haystack = `${student.name} ${student.surname} ${student.tg_username}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [allStudents, groupEditor, studentSearch]);
 
   if (!authed) {
     return <Navigate to="/login" replace />;
@@ -152,7 +230,7 @@ function CoursePage() {
     );
   }
 
-  if (!data || !courseForm) {
+  if (!data || !course || !courseForm) {
     return null;
   }
 
@@ -166,6 +244,19 @@ function CoursePage() {
       setError(err.message || fallbackMessage);
     } finally {
       setBusyKey("");
+    }
+  };
+
+  const loadAllStudents = async () => {
+    if (!canEdit || allStudents.length > 0 || studentsLoading) return;
+    try {
+      setStudentsLoading(true);
+      const response = await listStudents();
+      setAllStudents(response.students || []);
+    } catch (err) {
+      setError(err.message || "Не удалось загрузить учеников");
+    } finally {
+      setStudentsLoading(false);
     }
   };
 
@@ -183,11 +274,32 @@ function CoursePage() {
     );
   };
 
+  const handleCourseCoverUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      setCoverUploading(true);
+      const response = await uploadCourseCover(file);
+      setCourseForm((prev) => ({
+        ...prev,
+        cover_image: response.url || "",
+      }));
+      setError("");
+    } catch (err) {
+      setError(err.message || "Не удалось загрузить обложку курса");
+    } finally {
+      setCoverUploading(false);
+    }
+  };
+
   const handleCreateGroup = async () => {
     await runAction(
       "create-group",
       async () => {
-        await createCourseGroup(courseId, {});
+        await createCourseGroup(courseId, {
+          current_topic_id: orderedLessons[0]?.id || null,
+        });
         setNotice("Группа добавлена.");
         await loadCourse();
       },
@@ -222,68 +334,83 @@ function CoursePage() {
     );
   };
 
-  const updateGroupField = (groupId, field, value) => {
-    setGroupEditors((prev) => ({
+  const openGroupEditor = (group) => {
+    setStudentSearch("");
+    setGroupEditor(createGroupEditor(group));
+    loadAllStudents();
+  };
+
+  const closeGroupEditor = () => {
+    setGroupEditor(null);
+    setStudentPickerOpen(false);
+    setStudentSearch("");
+  };
+
+  const updateGroupEditorField = (field, value) => {
+    setGroupEditor((prev) => ({
       ...prev,
-      [groupId]: {
-        ...(prev[groupId] || emptyGroupEditor),
-        [field]: value,
-      },
+      [field]: value,
     }));
   };
 
-  const updateGroupSlot = (groupId, slotIndex, field, value) => {
-    const editor = groupEditors[groupId] || emptyGroupEditor;
-    const nextSlots = [...(editor.schedule_slots || [])];
-    nextSlots[slotIndex] = {
-      ...(nextSlots[slotIndex] || { weekday: 0, start_time: "", end_time: "" }),
-      [field]: value,
-    };
-    updateGroupField(groupId, "schedule_slots", nextSlots);
+  const updateGroupSlot = (slotIndex, field, value) => {
+    setGroupEditor((prev) => {
+      const nextSlots = [...(prev.schedule_slots || [])];
+      nextSlots[slotIndex] = {
+        ...(nextSlots[slotIndex] || { weekday: 0, start_time: "", end_time: "" }),
+        [field]: value,
+      };
+      return {
+        ...prev,
+        schedule_slots: nextSlots,
+      };
+    });
   };
 
-  const addGroupSlot = (groupId) => {
-    const editor = groupEditors[groupId] || emptyGroupEditor;
-    updateGroupField(groupId, "schedule_slots", [
-      ...(editor.schedule_slots || []),
-      { weekday: 0, start_time: "", end_time: "" },
-    ]);
+  const addGroupSlot = () => {
+    setGroupEditor((prev) => ({
+      ...prev,
+      schedule_slots: [
+        ...(prev.schedule_slots || []),
+        { weekday: 0, start_time: "18:00", end_time: "19:30" },
+      ],
+    }));
   };
 
-  const removeGroupSlot = (groupId, slotIndex) => {
-    const editor = groupEditors[groupId] || emptyGroupEditor;
-    updateGroupField(
-      groupId,
-      "schedule_slots",
-      (editor.schedule_slots || []).filter((_, index) => index !== slotIndex)
-    );
+  const removeGroupSlot = (slotIndex) => {
+    setGroupEditor((prev) => ({
+      ...prev,
+      schedule_slots: (prev.schedule_slots || []).filter((_, index) => index !== slotIndex),
+    }));
   };
 
-  const toggleGroupStudent = (groupId, studentId) => {
-    const editor = groupEditors[groupId] || emptyGroupEditor;
-    const current = editor.student_ids || [];
-    updateGroupField(
-      groupId,
-      "student_ids",
-      current.includes(studentId)
-        ? current.filter((item) => item !== studentId)
-        : [...current, studentId]
-    );
+  const addStudentToEditor = (studentId) => {
+    setGroupEditor((prev) => ({
+      ...prev,
+      student_ids: [...new Set([...(prev.student_ids || []), studentId])],
+    }));
   };
 
-  const handleSaveGroup = async (groupId) => {
-    const editor = groupEditors[groupId] || emptyGroupEditor;
+  const removeStudentFromEditor = (studentId) => {
+    setGroupEditor((prev) => ({
+      ...prev,
+      student_ids: (prev.student_ids || []).filter((item) => item !== studentId),
+    }));
+  };
+
+  const handleSaveGroup = async () => {
+    if (!groupEditor) return;
     await runAction(
-      `save-group-${groupId}`,
+      `save-group-${groupEditor.id}`,
       async () => {
-        await updateCourseGroup(courseId, groupId, {
-          name: (editor.name || "").trim() || "Новая группа",
-          student_ids: editor.student_ids || [],
-          schedule_slots: (editor.schedule_slots || []).filter(
-            (slot) => slot.start_time && slot.weekday !== undefined
-          ),
+        await updateCourseGroup(courseId, groupEditor.id, {
+          name: (groupEditor.name || "").trim() || "Новая группа",
+          student_ids: groupEditor.student_ids || [],
+          current_topic_id: groupEditor.current_topic_id || orderedLessons[0]?.id || null,
+          schedule_slots: sanitizeScheduleSlots(groupEditor.schedule_slots),
         });
         setNotice("Группа обновлена.");
+        closeGroupEditor();
         await loadCourse();
       },
       "Не удалось обновить группу"
@@ -296,10 +423,35 @@ function CoursePage() {
       async () => {
         await deleteCourseGroup(courseId, groupId);
         setNotice("Группа удалена.");
+        closeGroupEditor();
         await loadCourse();
       },
       "Не удалось удалить группу"
     );
+  };
+
+  const handleSaveVisibility = async () => {
+    if (!visibilityGroupId) return;
+    const targetGroup = groups.find((group) => group.id === visibilityGroupId);
+    if (!targetGroup) return;
+    await runAction(
+      `visibility-${visibilityGroupId}`,
+      async () => {
+        await updateCourseGroup(courseId, visibilityGroupId, {
+          current_topic_id: visibilityTopicId || orderedLessons[0]?.id || null,
+        });
+        setNotice("Видимость уроков обновлена.");
+        setVisibilityGroupId("");
+        setVisibilityTopicId("");
+        await loadCourse();
+      },
+      "Не удалось обновить видимость уроков"
+    );
+  };
+
+  const openVisibilityModal = (group) => {
+    setVisibilityGroupId(group.id);
+    setVisibilityTopicId(group.current_topic_id || orderedLessons[0]?.id || "");
   };
 
   const persistLessonOrder = async (nextLessons) => {
@@ -335,17 +487,22 @@ function CoursePage() {
     await persistLessonOrder(nextLessons);
   };
 
-  const toggleLessonAccess = async (lesson) => {
-    await runAction(
-      `lesson-access-${lesson.id}`,
-      async () => {
-        const nextIsOpen = !lesson.is_open;
-        await updateLesson(lesson.id, { is_open: nextIsOpen });
-        setNotice(nextIsOpen ? "Урок открыт для учеников." : "Урок закрыт для учеников.");
-        await loadCourse();
-      },
-      "Не удалось изменить доступ к уроку"
-    );
+  const teacherStats = [
+    { label: "Группы", value: groups.length },
+    { label: "Ученики", value: students.length },
+    { label: "Уроки", value: orderedLessons.length },
+  ];
+
+  const studentStats = [
+    { label: "Баллы", value: `${course.earned_points} / ${course.total_points}` },
+    { label: "Прогресс", value: `${Math.round(course.progress_percent || 0)}%` },
+    { label: "Уроки", value: orderedLessons.length },
+  ];
+
+  const visibleLessonsLabel = (group) => {
+    const topicId = group.current_topic_id || orderedLessons[0]?.id;
+    const lesson = orderedLessons.find((item) => item.id === topicId) || orderedLessons[0];
+    return lesson ? `До урока: ${lesson.name}` : "Пока нет уроков";
   };
 
   return (
@@ -361,126 +518,118 @@ function CoursePage() {
         {notice && <StatusCard>{notice}</StatusCard>}
         {error && <StatusCard $error>{error}</StatusCard>}
 
-        <HeroGrid>
-          <HeroCard>
-            <HeroTextBlock>
-              {showCourseSettings ? (
-                <CourseSettingsForm onSubmit={handleCourseSave}>
+        <HeroCard>
+          <HeroMain>
+            {showCourseSettings ? (
+              <SettingsForm onSubmit={handleCourseSave}>
+                <Field>
+                  <Label>Название курса</Label>
+                  <TitleInput
+                    value={courseForm.name}
+                    onChange={(event) =>
+                      setCourseForm((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>Краткое описание</Label>
+                  <Textarea
+                    rows={4}
+                    value={courseForm.description}
+                    onChange={(event) =>
+                      setCourseForm((prev) => ({ ...prev, description: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <Label>Общая информация</Label>
+                  <Textarea
+                    rows={8}
+                    value={courseForm.public_info}
+                    onChange={(event) =>
+                      setCourseForm((prev) => ({ ...prev, public_info: event.target.value }))
+                    }
+                  />
+                </Field>
+                <FieldRow>
                   <Field>
-                    <Label>Название курса</Label>
-                    <TitleInput
-                      value={courseForm.name}
+                    <Label>Цвет</Label>
+                    <ColorInput
+                      type="color"
+                      value={courseForm.accent_color}
                       onChange={(event) =>
-                        setCourseForm((prev) => ({ ...prev, name: event.target.value }))
+                        setCourseForm((prev) => ({ ...prev, accent_color: event.target.value }))
                       }
                     />
                   </Field>
                   <Field>
-                    <Label>Краткое описание</Label>
-                    <Textarea
-                      rows={4}
-                      value={courseForm.description}
-                      onChange={(event) =>
-                        setCourseForm((prev) => ({
-                          ...prev,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field>
-                    <Label>Общая информация о курсе</Label>
-                    <Textarea
-                      rows={8}
-                      value={courseForm.public_info}
-                      onChange={(event) =>
-                        setCourseForm((prev) => ({
-                          ...prev,
-                          public_info: event.target.value,
-                        }))
-                      }
-                    />
-                  </Field>
-                  <FieldRow>
-                    <Field>
-                      <Label>Цвет курса</Label>
-                      <ColorInput
-                        type="color"
-                        value={courseForm.accent_color}
-                        onChange={(event) =>
+                    <Label>Обложка курса</Label>
+                    <CoverUploadCard>
+                      <CoverUploadPreview>
+                        {courseForm.cover_image ? (
+                          <HeroImage
+                            src={resolveAssetUrl(courseForm.cover_image)}
+                            alt="Обложка курса"
+                          />
+                        ) : (
+                          <PreviewTile
+                            style={{
+                              background: `linear-gradient(140deg, ${
+                                courseForm.accent_color || "#16a085"
+                              } 0%, #0f1824 100%)`,
+                            }}
+                          />
+                        )}
+                      </CoverUploadPreview>
+                      <ImageUploadControl
+                        inputId="course-cover-upload"
+                        onChange={handleCourseCoverUpload}
+                        onRemove={() =>
                           setCourseForm((prev) => ({
                             ...prev,
-                            accent_color: event.target.value,
+                            cover_image: "",
                           }))
                         }
+                        uploading={coverUploading}
+                        hasValue={Boolean(courseForm.cover_image)}
                       />
-                    </Field>
-                    <Field>
-                      <Label>Картинка курса, URL</Label>
-                      <Input
-                        value={courseForm.cover_image}
-                        onChange={(event) =>
-                          setCourseForm((prev) => ({
-                            ...prev,
-                            cover_image: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                  </FieldRow>
-                  <ActionRow>
-                    <PrimaryButton type="submit" disabled={busyKey === "save-course"}>
-                      {busyKey === "save-course" ? "Сохраняю..." : "Сохранить курс"}
-                    </PrimaryButton>
-                    <GhostButton
-                      type="button"
-                      onClick={() => setShowCourseSettings(false)}
-                    >
-                      Закрыть
-                    </GhostButton>
-                  </ActionRow>
-                </CourseSettingsForm>
-              ) : (
-                <>
-                  <Eyebrow>Курс</Eyebrow>
-                  <HeroTitle>{course.name}</HeroTitle>
-                  {course.description && <HeroText>{course.description}</HeroText>}
-                  <MetaStack>
-                    {course.active_group_name && (
-                      <MetaPill>
-                        <strong>Группа</strong>
-                        <span>{course.active_group_name}</span>
-                      </MetaPill>
-                    )}
-                    {course.active_group_schedule_summary && (
-                      <MetaPill>
-                        <strong>Расписание</strong>
-                        <span>{course.active_group_schedule_summary}</span>
-                      </MetaPill>
-                    )}
-                  </MetaStack>
-                  {course.public_info && <HeroInfo>{course.public_info}</HeroInfo>}
-                </>
-              )}
-
-              {!showCourseSettings && (
-                <>
-                  <StatsRow>
-                    <StatCard>
-                      <span>Баллы</span>
-                      <strong>
-                        {course.earned_points} / {course.total_points}
-                      </strong>
+                    </CoverUploadCard>
+                  </Field>
+                </FieldRow>
+                <ActionRow>
+                  <PrimaryButton type="submit" disabled={busyKey === "save-course"}>
+                    {busyKey === "save-course" ? "Сохраняю..." : "Сохранить курс"}
+                  </PrimaryButton>
+                  <GhostButton type="button" onClick={() => setShowCourseSettings(false)}>
+                    Закрыть
+                  </GhostButton>
+                </ActionRow>
+              </SettingsForm>
+            ) : (
+              <>
+                <Eyebrow>Курс</Eyebrow>
+                <HeroTitle>{course.name}</HeroTitle>
+                {course.description && <HeroText>{course.description}</HeroText>}
+                {course.active_group_name && (
+                  <MetaLine>
+                    <strong>Группа:</strong> <span>{course.active_group_name}</span>
+                  </MetaLine>
+                )}
+                {course.active_group_schedule_summary && (
+                  <MetaLine>
+                    <strong>Расписание:</strong> <span>{course.active_group_schedule_summary}</span>
+                  </MetaLine>
+                )}
+                {course.public_info && <HeroInfo>{course.public_info}</HeroInfo>}
+                <StatsGrid>
+                  {(canEdit ? teacherStats : studentStats).map((item) => (
+                    <StatCard key={item.label}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
                     </StatCard>
-                    <StatCard>
-                      <span>Прогресс</span>
-                      <strong>{Math.round(course.progress_percent || 0)}%</strong>
-                    </StatCard>
-                    <StatCard>
-                      <span>Уроков</span>
-                      <strong>{orderedLessons.length}</strong>
-                    </StatCard>
-                  </StatsRow>
+                  ))}
+                </StatsGrid>
+                {!canEdit && (
                   <Track>
                     <Fill
                       style={{
@@ -489,59 +638,169 @@ function CoursePage() {
                       }}
                     />
                   </Track>
-                </>
-              )}
+                )}
+              </>
+            )}
 
-              {canEdit && !showCourseSettings && (
-                <ActionRow>
-                  <PrimaryButton
-                    type="button"
-                    onClick={handleCreateGroup}
-                    disabled={busyKey === "create-group"}
-                  >
-                    {busyKey === "create-group" ? "Добавляю..." : "Добавить группу"}
-                  </PrimaryButton>
-                  <PrimaryButton
-                    type="button"
-                    onClick={handleCreateLesson}
-                    disabled={busyKey === "create-lesson"}
-                  >
-                    {busyKey === "create-lesson" ? "Добавляю..." : "Добавить урок"}
-                  </PrimaryButton>
-                  <SecondaryButton
-                    type="button"
-                    onClick={() => setShowCourseSettings(true)}
-                  >
-                    Настроить курс
-                  </SecondaryButton>
-                </ActionRow>
-              )}
-            </HeroTextBlock>
+            {canEdit && !showCourseSettings && (
+              <ActionRow>
+                <PrimaryButton type="button" onClick={handleCreateGroup} disabled={busyKey === "create-group"}>
+                  {busyKey === "create-group" ? "Добавляю..." : "Добавить группу"}
+                </PrimaryButton>
+                <PrimaryButton type="button" onClick={handleCreateLesson} disabled={busyKey === "create-lesson"}>
+                  {busyKey === "create-lesson" ? "Добавляю..." : "Добавить урок"}
+                </PrimaryButton>
+                <GhostButton type="button" onClick={() => setShowCourseSettings(true)}>
+                  Настроить курс
+                </GhostButton>
+              </ActionRow>
+            )}
+          </HeroMain>
 
-            <HeroVisual>
-              {course.cover_image ? (
-                <HeroImage src={resolveAssetUrl(course.cover_image)} alt={course.name} />
-              ) : (
-                <VisualPlaceholder
-                  style={{
-                    background: `linear-gradient(135deg, ${course.accent_color || "#16a085"} 0%, #f7fafc 92%)`,
-                  }}
-                />
-              )}
-            </HeroVisual>
-          </HeroCard>
+          <HeroSide>
+            {course.cover_image ? (
+              <HeroImage src={resolveAssetUrl(course.cover_image)} alt={course.name} />
+            ) : (
+              <PreviewTile style={{ background: `linear-gradient(135deg, ${course.accent_color || "#16a085"} 0%, #f7fafc 100%)` }} />
+            )}
+          </HeroSide>
+        </HeroCard>
 
-          <LeaderboardCard>
-            <SectionTitle>Рейтинг курса</SectionTitle>
-            {leaderboard.length === 0 ? (
-              <EmptyState>Пока нет участников с баллами.</EmptyState>
+        {canEdit && (
+          <SectionCard>
+            <SectionHeader>
+              <div>
+                <SectionTitle>Группы</SectionTitle>
+              </div>
+            </SectionHeader>
+            {groups.length === 0 ? (
+              <EmptyState>Пока нет групп.</EmptyState>
+            ) : (
+              <GroupList>
+                {groups.map((group) => (
+                  <GroupRow key={group.id}>
+                    <div>
+                      <GroupName>{group.name}</GroupName>
+                      <GroupMeta>{group.schedule_summary || "Расписание не настроено"}</GroupMeta>
+                      <GroupMeta>{group.students.length} учеников · {visibleLessonsLabel(group)}</GroupMeta>
+                    </div>
+                    <GroupActions>
+                      <GhostButton type="button" onClick={() => openGroupEditor(group)}>
+                        Изменить
+                      </GhostButton>
+                      <GhostButton type="button" onClick={() => openVisibilityModal(group)}>
+                        Видимость уроков
+                      </GhostButton>
+                    </GroupActions>
+                  </GroupRow>
+                ))}
+              </GroupList>
+            )}
+          </SectionCard>
+        )}
+
+        <Tabs>
+          <TabButton type="button" $active={activeTab === "lessons"} onClick={() => setActiveTab("lessons")}>Уроки</TabButton>
+          <TabButton type="button" $active={activeTab === "rating"} onClick={() => setActiveTab("rating")}>Рейтинг группы</TabButton>
+        </Tabs>
+
+        {activeTab === "lessons" ? (
+          <SectionCard>
+            <SectionHeader>
+              <div>
+                <SectionTitle>Уроки</SectionTitle>
+              </div>
+            </SectionHeader>
+            {orderedLessons.length === 0 ? (
+              <EmptyState>Пока нет уроков.</EmptyState>
+            ) : (
+              <LessonList>
+                {orderedLessons.map((lesson, index) => {
+                  const isLocked = !canEdit && !lesson.can_access;
+                  const lessonHref = `/mycourses/${courseId}/lessons/${lesson.id}`;
+                  return (
+                    <LessonCard
+                      key={lesson.id}
+                      draggable={canEdit}
+                      onDragStart={() => {
+                        if (!canEdit) return;
+                        setDraggedLessonId(lesson.id);
+                      }}
+                      onDragOver={(event) => {
+                        if (!canEdit) return;
+                        event.preventDefault();
+                        setDropTargetIndex(index);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        if (!canEdit) return;
+                        handleLessonDrop(index);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedLessonId("");
+                        setDropTargetIndex(null);
+                      }}
+                      $dropActive={dropTargetIndex === index}
+                      $locked={isLocked}
+                      onClick={() => {
+                        if (isLocked) return;
+                        navigate(lessonHref);
+                      }}
+                    >
+                      <LessonOrder>{index + 1}</LessonOrder>
+                      <LessonBody>
+                        <LessonTitle>{lesson.name}</LessonTitle>
+                        <LessonBadges>
+                          <Badge>{getLessonStatusLabel(lesson, index, isStudent)}</Badge>
+                          <Badge>{lesson.total_tasks || 0} задач</Badge>
+                          {!canEdit && <Badge>{Math.round(lesson.progress_percent || 0)}%</Badge>}
+                        </LessonBadges>
+                        <LessonDescription>
+                          {getLessonAccessHint(
+                            lesson,
+                            index,
+                            orderedLessons,
+                            canEdit
+                          )}
+                        </LessonDescription>
+                      </LessonBody>
+                    </LessonCard>
+                  );
+                })}
+              </LessonList>
+            )}
+          </SectionCard>
+        ) : (
+          <SectionCard>
+            <SectionHeader>
+              <div>
+                <SectionTitle>Рейтинг группы</SectionTitle>
+                <SectionText>
+                  {canEdit ? "Выберите группу и посмотрите прогресс ее учеников." : "Здесь показан рейтинг вашей группы."}
+                </SectionText>
+              </div>
+              {canEdit && ratingGroups.length > 1 && (
+                <Select
+                  value={selectedRatingGroup?.id || ""}
+                  onChange={(event) => setSelectedRatingGroupId(event.target.value)}
+                >
+                  {ratingGroups.map((group) => (
+                    <option key={group.id} value={group.id}>{group.name}</option>
+                  ))}
+                </Select>
+              )}
+            </SectionHeader>
+            {!selectedRatingGroup ? (
+              <EmptyState>Для рейтинга пока нет группы.</EmptyState>
+            ) : selectedRatingGroup.leaderboard.length === 0 ? (
+              <EmptyState>В этой группе пока нет учеников с результатами.</EmptyState>
             ) : (
               <LeaderboardList>
-                {leaderboard.map((entry, index) => (
-                  <LeaderboardRow key={entry.user_id}>
+                {selectedRatingGroup.leaderboard.map((entry, index) => (
+                  <LeaderboardRow key={`${selectedRatingGroup.id}-${entry.user_id}`}>
                     <LeaderboardPlace>{index + 1}</LeaderboardPlace>
                     <LeaderboardPerson>
-                      <strong>{`${entry.name} ${entry.surname}`.trim()}</strong>
+                      <strong>{entry.name} {entry.surname}</strong>
                       <small>@{entry.tg_username}</small>
                     </LeaderboardPerson>
                     <LeaderboardPoints>{entry.points} XP</LeaderboardPoints>
@@ -549,230 +808,159 @@ function CoursePage() {
                 ))}
               </LeaderboardList>
             )}
-          </LeaderboardCard>
-        </HeroGrid>
-
-        {canEdit && groups.length > 0 && (
-          <SectionCard>
-            <SectionHeader>
-              <div>
-                <SectionTitle>Группы</SectionTitle>
-                <SectionHint>Расписание и состав группы редактируются прямо здесь.</SectionHint>
-              </div>
-            </SectionHeader>
-            <GroupGrid>
-              {groups.map((group) => {
-                const editor = groupEditors[group.id] || emptyGroupEditor;
-                return (
-                  <GroupCard key={group.id}>
-                    <Field>
-                      <Label>Название группы</Label>
-                      <Input
-                        value={editor.name}
-                        onChange={(event) =>
-                          updateGroupField(group.id, "name", event.target.value)
-                        }
-                      />
-                    </Field>
-
-                    <Field>
-                      <Label>Занятия</Label>
-                      <SlotStack>
-                        {(editor.schedule_slots || []).map((slot, slotIndex) => (
-                          <SlotRow key={`${group.id}-${slotIndex}`}>
-                            <Select
-                              value={slot.weekday ?? 0}
-                              onChange={(event) =>
-                                updateGroupSlot(
-                                  group.id,
-                                  slotIndex,
-                                  "weekday",
-                                  Number(event.target.value)
-                                )
-                              }
-                            >
-                              {weekdayOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </Select>
-                            <Input
-                              type="time"
-                              value={slot.start_time || ""}
-                              onChange={(event) =>
-                                updateGroupSlot(
-                                  group.id,
-                                  slotIndex,
-                                  "start_time",
-                                  event.target.value
-                                )
-                              }
-                            />
-                            <Input
-                              type="time"
-                              value={slot.end_time || ""}
-                              onChange={(event) =>
-                                updateGroupSlot(
-                                  group.id,
-                                  slotIndex,
-                                  "end_time",
-                                  event.target.value
-                                )
-                              }
-                            />
-                            <MiniDangerButton
-                              type="button"
-                              onClick={() => removeGroupSlot(group.id, slotIndex)}
-                            >
-                              Удалить
-                            </MiniDangerButton>
-                          </SlotRow>
-                        ))}
-                        <GhostButton type="button" onClick={() => addGroupSlot(group.id)}>
-                          Добавить день
-                        </GhostButton>
-                      </SlotStack>
-                    </Field>
-
-                    <Field>
-                      <Label>Ученики</Label>
-                      {students.length === 0 ? (
-                        <InlineMuted>Сначала добавьте учеников в курс.</InlineMuted>
-                      ) : (
-                        <StudentChipGrid>
-                          {students.map((student) => {
-                            const active = (editor.student_ids || []).includes(student.user_id);
-                            return (
-                              <StudentChip
-                                key={student.user_id}
-                                type="button"
-                                $active={active}
-                                onClick={() => toggleGroupStudent(group.id, student.user_id)}
-                              >
-                                {studentNameById[student.user_id]}
-                              </StudentChip>
-                            );
-                          })}
-                        </StudentChipGrid>
-                      )}
-                    </Field>
-
-                    <ActionRow>
-                      <PrimaryButton
-                        type="button"
-                        disabled={busyKey === `save-group-${group.id}`}
-                        onClick={() => handleSaveGroup(group.id)}
-                      >
-                        {busyKey === `save-group-${group.id}` ? "Сохраняю..." : "Сохранить"}
-                      </PrimaryButton>
-                      <DangerButton
-                        type="button"
-                        disabled={busyKey === `delete-group-${group.id}`}
-                        onClick={() => handleDeleteGroup(group.id)}
-                      >
-                        {busyKey === `delete-group-${group.id}` ? "Удаляю..." : "Удалить"}
-                      </DangerButton>
-                    </ActionRow>
-                  </GroupCard>
-                );
-              })}
-            </GroupGrid>
           </SectionCard>
         )}
 
-        <SectionCard>
-          <SectionHeader>
-            <div>
-              <SectionTitle>Уроки</SectionTitle>
-              <SectionHint>
-                {canEdit
-                  ? "Перетаскивайте карточки, чтобы менять порядок."
-                  : "Закрытые уроки видны в списке, но открыть их нельзя."}
-              </SectionHint>
-            </div>
-          </SectionHeader>
+        {groupEditor && (
+          <Overlay>
+            <ModalCard>
+              <ModalHeader>
+                <div>
+                  <ModalTitle>Изменить группу</ModalTitle>
+                </div>
+                <IconButton type="button" onClick={closeGroupEditor}>×</IconButton>
+              </ModalHeader>
 
-          {orderedLessons.length === 0 ? (
-            <EmptyState>Пока нет уроков.</EmptyState>
-          ) : (
-            <LessonList>
-              {orderedLessons.map((lesson, index) => {
-                const isLocked = !lesson.can_edit && !lesson.can_access;
-                const lessonHref = `/mycourses/${courseId}/lessons/${lesson.id}`;
+              <Field>
+                <Label>Название группы</Label>
+                <Input
+                  value={groupEditor.name}
+                  onChange={(event) => updateGroupEditorField("name", event.target.value)}
+                />
+              </Field>
 
-                return (
-                  <LessonCard
-                    key={lesson.id}
-                    draggable={canEdit}
-                    onDragStart={() => {
-                      if (!canEdit) return;
-                      setDraggedLessonId(lesson.id);
-                    }}
-                    onDragOver={(event) => {
-                      if (!canEdit) return;
-                      event.preventDefault();
-                      setDropTargetIndex(index);
-                    }}
-                    onDragLeave={() => {
-                      if (dropTargetIndex === index) {
-                        setDropTargetIndex(null);
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      if (!canEdit) return;
-                      handleLessonDrop(index);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedLessonId("");
-                      setDropTargetIndex(null);
-                    }}
-                    $dropActive={dropTargetIndex === index}
-                    $locked={isLocked}
-                  >
-                    <LessonOrder>{index + 1}</LessonOrder>
-                    <LessonBody>
-                      <LessonTopRow>
-                        <LessonTitleWrap>
-                          {isLocked ? (
-                            <LockedTitle>{lesson.name}</LockedTitle>
-                          ) : (
-                            <LessonLink to={lessonHref}>{lesson.name}</LessonLink>
-                          )}
-                          <LessonMeta>
-                            <span>{getLessonStatusLabel(lesson, index)}</span>
-                            <span>{lesson.total_tasks || 0} задач</span>
-                            <span>{Math.round(lesson.progress_percent || 0)}%</span>
-                          </LessonMeta>
-                        </LessonTitleWrap>
-                        {canEdit && (
-                          <LessonActions>
-                            <GhostButton
-                              type="button"
-                              disabled={busyKey === `lesson-access-${lesson.id}`}
-                              onClick={() => toggleLessonAccess(lesson)}
-                            >
-                              {busyKey === `lesson-access-${lesson.id}`
-                                ? "Сохраняю..."
-                                : lesson.is_open
-                                ? "Закрыть урок"
-                                : "Открыть урок"}
-                            </GhostButton>
-                            <PrimaryLink to={lessonHref}>Открыть урок</PrimaryLink>
-                          </LessonActions>
-                        )}
-                      </LessonTopRow>
-                      <LessonDescription>
-                        {lesson.description || "Тема пока без описания."}
-                      </LessonDescription>
-                    </LessonBody>
-                  </LessonCard>
-                );
-              })}
-            </LessonList>
-          )}
-        </SectionCard>
+              <Field>
+                <Label>Занятия</Label>
+                <SlotStack>
+                  {(groupEditor.schedule_slots || []).map((slot, slotIndex) => (
+                    <SlotRow key={`slot-${slotIndex}`}>
+                      <Select
+                        value={slot.weekday}
+                        onChange={(event) => updateGroupSlot(slotIndex, "weekday", Number(event.target.value))}
+                      >
+                        {weekdayOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </Select>
+                      <TimeInput
+                        type="time"
+                        value={slot.start_time}
+                        onChange={(event) => updateGroupSlot(slotIndex, "start_time", event.target.value)}
+                      />
+                      <TimeArrow>—</TimeArrow>
+                      <TimeInput
+                        type="time"
+                        value={slot.end_time}
+                        onChange={(event) => updateGroupSlot(slotIndex, "end_time", event.target.value)}
+                      />
+                      <IconButton type="button" onClick={() => removeGroupSlot(slotIndex)}>×</IconButton>
+                    </SlotRow>
+                  ))}
+                </SlotStack>
+                <InlineButtons>
+                  <GhostButton type="button" onClick={addGroupSlot}>Добавить день</GhostButton>
+                  {!!groupEditor.schedule_slots.length && (
+                    <InlineHint>
+                      {groupEditor.schedule_slots.map(buildSlotLabel).join(" · ")}
+                    </InlineHint>
+                  )}
+                </InlineButtons>
+              </Field>
+
+              <Field>
+                <Label>Ученики</Label>
+                <InlineButtons>
+                  <GhostButton type="button" onClick={async () => {
+                    await loadAllStudents();
+                    setStudentPickerOpen(true);
+                  }}>
+                    Добавить ученика
+                  </GhostButton>
+                </InlineButtons>
+                {selectedEditorStudents.length === 0 ? (
+                  <EmptyState>В группе пока нет учеников.</EmptyState>
+                ) : (
+                  <StudentPills>
+                    {selectedEditorStudents.map((student) => (
+                      <StudentPill key={student.user_id}>
+                        <span>{student.name} {student.surname}</span>
+                        <button type="button" onClick={() => removeStudentFromEditor(student.user_id)}>×</button>
+                      </StudentPill>
+                    ))}
+                  </StudentPills>
+                )}
+              </Field>
+
+              <ActionRow>
+                <PrimaryButton type="button" onClick={handleSaveGroup} disabled={busyKey === `save-group-${groupEditor.id}`}>
+                  {busyKey === `save-group-${groupEditor.id}` ? "Сохраняю..." : "Сохранить"}
+                </PrimaryButton>
+                <DangerButton type="button" onClick={() => handleDeleteGroup(groupEditor.id)} disabled={busyKey === `delete-group-${groupEditor.id}`}>
+                  {busyKey === `delete-group-${groupEditor.id}` ? "Удаляю..." : "Удалить"}
+                </DangerButton>
+              </ActionRow>
+            </ModalCard>
+          </Overlay>
+        )}
+
+        {studentPickerOpen && groupEditor && (
+          <Overlay>
+            <MiniModal>
+              <ModalHeader>
+                <div>
+                  <ModalTitle>Добавить ученика</ModalTitle>
+                </div>
+                <IconButton type="button" onClick={() => setStudentPickerOpen(false)}>×</IconButton>
+              </ModalHeader>
+              <Input value={studentSearch} onChange={(event) => setStudentSearch(event.target.value)} placeholder="Найти ученика" />
+              <SearchList>
+                {studentsLoading ? (
+                  <EmptyState>Загрузка учеников...</EmptyState>
+                ) : filteredStudentOptions.length === 0 ? (
+                  <EmptyState>Ничего не найдено.</EmptyState>
+                ) : (
+                  filteredStudentOptions.map((student) => (
+                    <SearchRow key={student.user_id}>
+                      <div>
+                        <strong>{student.name} {student.surname}</strong>
+                        <small>@{student.tg_username}</small>
+                      </div>
+                      <GhostButton type="button" onClick={() => addStudentToEditor(student.user_id)}>
+                        Добавить
+                      </GhostButton>
+                    </SearchRow>
+                  ))
+                )}
+              </SearchList>
+            </MiniModal>
+          </Overlay>
+        )}
+
+        {visibilityGroupId && (
+          <Overlay>
+            <MiniModal>
+              <ModalHeader>
+                <div>
+                  <ModalTitle>Видимость уроков</ModalTitle>
+                </div>
+                <IconButton type="button" onClick={() => setVisibilityGroupId("")}>×</IconButton>
+              </ModalHeader>
+              <Field>
+                <Label>Текущий урок группы</Label>
+                <Select value={visibilityTopicId} onChange={(event) => setVisibilityTopicId(event.target.value)}>
+                  {orderedLessons.map((lesson, index) => (
+                    <option key={lesson.id} value={lesson.id}>{index + 1}. {lesson.name}</option>
+                  ))}
+                </Select>
+              </Field>
+              <ActionRow>
+                <PrimaryButton type="button" onClick={handleSaveVisibility} disabled={busyKey === `visibility-${visibilityGroupId}`}>
+                  {busyKey === `visibility-${visibilityGroupId}` ? "Сохраняю..." : "Сохранить видимость"}
+                </PrimaryButton>
+              </ActionRow>
+            </MiniModal>
+          </Overlay>
+        )}
       </Content>
     </Page>
   );
@@ -810,16 +998,6 @@ const CurrentCrumb = styled.span`
   color: var(--text);
 `;
 
-const HeroGrid = styled.section`
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.8fr);
-  gap: 24px;
-
-  @media (max-width: 980px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
 const HeroCard = styled.section`
   background: var(--card);
   border: 1px solid var(--border);
@@ -835,16 +1013,21 @@ const HeroCard = styled.section`
   }
 `;
 
-const HeroTextBlock = styled.div`
+const HeroMain = styled.div`
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-width: 0;
 `;
 
-const HeroVisual = styled.div`
+const HeroSide = styled.div`
   display: flex;
-  align-items: stretch;
+`;
+
+const PreviewTile = styled.div`
+  width: 100%;
+  min-height: 220px;
+  border-radius: 22px;
+  border: 1px solid #e7ecf3;
 `;
 
 const HeroImage = styled.img`
@@ -853,29 +1036,6 @@ const HeroImage = styled.img`
   object-fit: cover;
   border-radius: 22px;
   border: 1px solid #e7ecf3;
-`;
-
-const VisualPlaceholder = styled.div`
-  width: 100%;
-  min-height: 220px;
-  border-radius: 22px;
-  border: 1px solid #e7ecf3;
-  position: relative;
-  overflow: hidden;
-
-  &::after {
-    content: "";
-    position: absolute;
-    inset: 14px;
-    border-radius: 18px;
-    background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.46), transparent),
-      repeating-linear-gradient(
-        -45deg,
-        rgba(255, 255, 255, 0.24) 0 14px,
-        rgba(255, 255, 255, 0) 14px 28px
-      );
-  }
 `;
 
 const Eyebrow = styled.div`
@@ -899,37 +1059,20 @@ const HeroInfo = styled.div`
   white-space: pre-wrap;
 `;
 
-const MetaStack = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-`;
-
-const MetaPill = styled.div`
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: #f6f8fb;
+const MetaLine = styled.div`
   color: var(--text);
-  max-width: 100%;
 
   strong {
     color: var(--muted);
   }
-
-  span {
-    min-width: 0;
-  }
 `;
 
-const StatsRow = styled.div`
+const StatsGrid = styled.div`
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 
-  @media (max-width: 720px) {
+  @media (max-width: 760px) {
     grid-template-columns: 1fr;
   }
 `;
@@ -966,18 +1109,6 @@ const Fill = styled.div`
   border-radius: inherit;
 `;
 
-const LeaderboardCard = styled.section`
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 28px;
-  box-shadow: var(--shadow);
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-`;
-
 const SectionCard = styled.section`
   background: var(--card);
   border: 1px solid var(--border);
@@ -993,6 +1124,7 @@ const SectionHeader = styled.div`
   display: flex;
   justify-content: space-between;
   gap: 14px;
+  align-items: flex-start;
   flex-wrap: wrap;
 `;
 
@@ -1000,106 +1132,59 @@ const SectionTitle = styled.h2`
   font-size: clamp(24px, 3vw, 34px);
 `;
 
-const SectionHint = styled.p`
+const SectionText = styled.p`
   color: var(--muted);
-  line-height: 1.6;
+  line-height: 1.65;
   margin-top: 6px;
 `;
 
-const LeaderboardList = styled.div`
+const GroupList = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 `;
 
-const LeaderboardRow = styled.div`
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: #f7f9fc;
-  min-width: 0;
-`;
-
-const LeaderboardPlace = styled.div`
-  font-weight: 800;
-  font-size: 24px;
-  color: #18243f;
-`;
-
-const LeaderboardPerson = styled.div`
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  strong,
-  small {
-    display: block;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  small {
-    color: var(--muted);
-  }
-`;
-
-const LeaderboardPoints = styled.div`
-  font-weight: 800;
-  color: var(--green);
-  white-space: nowrap;
-`;
-
-const GroupGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
-`;
-
-const GroupCard = styled.div`
+const GroupRow = styled.div`
   padding: 18px;
-  border-radius: 22px;
-  background: #fbfcfe;
-  border: 1px solid #e8edf4;
+  border-radius: 20px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-`;
-
-const SlotStack = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-`;
-
-const SlotRow = styled.div`
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: 10px;
-
-  @media (max-width: 680px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const StudentChipGrid = styled.div`
-  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
 `;
 
-const StudentChip = styled.button`
-  border: 1px solid ${(props) => (props.$active ? "#3d82c4" : "#dbe4ef")};
-  background: ${(props) => (props.$active ? "#ebf5ff" : "#ffffff")};
-  color: ${(props) => (props.$active ? "#22578b" : "var(--text)")};
+const GroupName = styled.h3`
+  font-size: 24px;
+`;
+
+const GroupMeta = styled.div`
+  color: var(--muted);
+  line-height: 1.6;
+`;
+
+const GroupActions = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+`;
+
+const Tabs = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+`;
+
+const TabButton = styled.button`
+  border: 1px solid ${(props) => (props.$active ? "#3d82c4" : "#d7dee8")};
   border-radius: 999px;
-  padding: 10px 14px;
-  font-weight: 700;
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 800;
+  background: ${(props) => (props.$active ? "#eef5fb" : "#fff")};
+  color: ${(props) => (props.$active ? "#23598d" : "var(--text)")};
   cursor: pointer;
 `;
 
@@ -1109,16 +1194,18 @@ const LessonList = styled.div`
   gap: 14px;
 `;
 
-const LessonCard = styled.div`
+const LessonCard = styled.button`
+  width: 100%;
+  border: 1px solid ${(props) => (props.$dropActive ? "#6fa2d0" : "#e6ebf2")};
+  border-radius: 22px;
+  padding: 18px;
+  background: ${(props) => (props.$locked ? "#fbfcfe" : "#f7fafc")};
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
-  padding: 18px;
-  border-radius: 22px;
-  background: ${(props) => (props.$locked ? "#fbfcfe" : "#f7fafc")};
-  border: 1px solid ${(props) => (props.$dropActive ? "#6fa2d0" : "#e6ebf2")};
-  opacity: ${(props) => (props.$locked ? 0.84 : 1)};
+  text-align: left;
+  cursor: ${(props) => (props.$locked ? "default" : "pointer")};
+  opacity: ${(props) => (props.$locked ? 0.72 : 1)};
 
   @media (max-width: 720px) {
     grid-template-columns: 1fr;
@@ -1141,54 +1228,28 @@ const LessonBody = styled.div`
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 0;
 `;
 
-const LessonTopRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-`;
-
-const LessonTitleWrap = styled.div`
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`;
-
-const LessonLink = styled(Link)`
-  text-decoration: none;
-  color: #18243f;
+const LessonTitle = styled.h3`
   font-size: 24px;
-  font-weight: 800;
   line-height: 1.2;
 `;
 
-const LockedTitle = styled.div`
-  color: #7a8598;
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1.2;
+const LessonBadges = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 `;
 
-const LessonMeta = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-
-  span {
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: #ffffff;
-    border: 1px solid #e1e8f0;
-    color: var(--muted);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
+const Badge = styled.div`
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #e1e8f0;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 `;
 
 const LessonDescription = styled.p`
@@ -1196,17 +1257,60 @@ const LessonDescription = styled.p`
   line-height: 1.65;
 `;
 
-const LessonActions = styled.div`
+const LeaderboardList = styled.div`
   display: flex;
+  flex-direction: column;
   gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 `;
 
-const CourseSettingsForm = styled.form`
+const LeaderboardRow = styled.div`
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f7f9fc;
+`;
+
+const LeaderboardPlace = styled.div`
+  font-weight: 800;
+  font-size: 24px;
+`;
+
+const LeaderboardPerson = styled.div`
+  min-width: 0;
+
+  strong,
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  small {
+    color: var(--muted);
+    margin-top: 4px;
+  }
+`;
+
+const LeaderboardPoints = styled.div`
+  white-space: nowrap;
+  font-weight: 800;
+  color: var(--green);
+`;
+
+const SettingsForm = styled.form`
   display: flex;
   flex-direction: column;
   gap: 16px;
+`;
+
+const Field = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 `;
 
 const FieldRow = styled.div`
@@ -1214,15 +1318,23 @@ const FieldRow = styled.div`
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 
-  @media (max-width: 720px) {
+  @media (max-width: 760px) {
     grid-template-columns: 1fr;
   }
 `;
 
-const Field = styled.label`
+const CoverUploadCard = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+`;
+
+const CoverUploadPreview = styled.div`
+  min-height: 180px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid #d8dee8;
+  background: #f7fafc;
 `;
 
 const Label = styled.span`
@@ -1237,6 +1349,8 @@ const Input = styled.input`
   font: inherit;
   background: #fff;
 `;
+
+const TimeInput = styled(Input)``;
 
 const Select = styled.select`
   width: 100%;
@@ -1277,6 +1391,134 @@ const ActionRow = styled.div`
   flex-wrap: wrap;
 `;
 
+const InlineButtons = styled.div`
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+`;
+
+const InlineHint = styled.div`
+  color: var(--muted);
+  line-height: 1.6;
+`;
+
+const SlotStack = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const SlotRow = styled.div`
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+
+  @media (max-width: 760px) {
+    grid-template-columns: 1fr;
+  }
+`;
+
+const TimeArrow = styled.div`
+  color: var(--muted);
+  text-align: center;
+`;
+
+const StudentPills = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+`;
+
+const StudentPill = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+
+  button {
+    border: none;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+`;
+
+const Overlay = styled.div`
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 22, 31, 0.28);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 60;
+`;
+
+const ModalCard = styled.section`
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 28px;
+  box-shadow: 0 24px 40px rgba(18, 22, 31, 0.22);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+`;
+
+const MiniModal = styled(ModalCard)`
+  width: min(620px, 100%);
+`;
+
+const ModalHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+`;
+
+const ModalTitle = styled.h3`
+  font-size: 30px;
+`;
+
+const IconButton = styled.button`
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid #d7dee8;
+  background: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+`;
+
+const SearchList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const SearchRow = styled.div`
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+
+  small {
+    color: var(--muted);
+  }
+`;
+
 const ButtonBase = styled.button`
   border: none;
   border-radius: 16px;
@@ -1291,11 +1533,6 @@ const PrimaryButton = styled(ButtonBase)`
   color: #fff;
 `;
 
-const SecondaryButton = styled(ButtonBase)`
-  background: #eef5fb;
-  color: #23598d;
-`;
-
 const GhostButton = styled(ButtonBase)`
   background: #fff;
   color: var(--text);
@@ -1305,24 +1542,6 @@ const GhostButton = styled(ButtonBase)`
 const DangerButton = styled(ButtonBase)`
   background: #fff0f0;
   color: #c44d4d;
-`;
-
-const MiniDangerButton = styled(DangerButton)`
-  padding: 12px 14px;
-`;
-
-const PrimaryLink = styled(Link)`
-  text-decoration: none;
-  border-radius: 16px;
-  padding: 13px 18px;
-  font-weight: 800;
-  background: #3d82c4;
-  color: #fff;
-`;
-
-const InlineMuted = styled.div`
-  color: var(--muted);
-  line-height: 1.6;
 `;
 
 const StatusCard = styled.div`

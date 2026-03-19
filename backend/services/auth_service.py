@@ -22,6 +22,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 http_bearer = HTTPBearer()
 logger = logging.getLogger("auth")
+ROLE_ORDER = [UserType.STUDENT, UserType.TEACHER, UserType.ADMIN]
 
 
 class AuthService:
@@ -197,16 +198,22 @@ async def get_current_user_bearer_dependency(
 async def get_current_user_with_role(access_token: str, min_role: UserType) -> User:
     auth_service = AuthService()
     user = await auth_service.get_current_user(access_token)
-    role_order = [UserType.STUDENT, UserType.TEACHER, UserType.ADMIN]
-    if role_order.index(user.user_type) < role_order.index(min_role):
+    if user.user_type not in ROLE_ORDER or min_role not in ROLE_ORDER:
+        if user.user_type != min_role:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        return user
+    if ROLE_ORDER.index(user.user_type) < ROLE_ORDER.index(min_role):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     return user
 
 
 def require_role(min_role: UserType):
     async def role_dependency(user: User = Depends(get_current_user_dependency)):
-        role_order = [UserType.STUDENT, UserType.TEACHER, UserType.ADMIN]
-        if role_order.index(user.user_type) < role_order.index(min_role):
+        if user.user_type not in ROLE_ORDER or min_role not in ROLE_ORDER:
+            if user.user_type != min_role:
+                raise HTTPException(status_code=403, detail="Недостаточно прав")
+            return user
+        if ROLE_ORDER.index(user.user_type) < ROLE_ORDER.index(min_role):
             raise HTTPException(status_code=403, detail="Недостаточно прав")
         return user
 

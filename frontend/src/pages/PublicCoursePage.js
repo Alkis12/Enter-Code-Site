@@ -3,10 +3,7 @@ import styled from "styled-components";
 import { Link, useParams } from "react-router-dom";
 
 import Header from "../components/Header/Header";
-import {
-  getPublicCourseDetail,
-  submitCourseRequest,
-} from "../api/learning";
+import { getPublicCourseDetail, submitCourseRequest } from "../api/learning";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8002";
 
@@ -18,7 +15,7 @@ function resolveAssetUrl(url) {
 
 function PublicCoursePage() {
   const { courseId } = useParams();
-  const [course, setCourse] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -36,7 +33,7 @@ function PublicCoursePage() {
         setLoading(true);
         const response = await getPublicCourseDetail(courseId);
         if (active) {
-          setCourse(response.course);
+          setDetail(response);
           setError("");
         }
       } catch (err) {
@@ -74,6 +71,10 @@ function PublicCoursePage() {
     }
   };
 
+  const course = detail?.course;
+  const groups = detail?.groups || [];
+  const lessons = detail?.lessons || [];
+
   return (
     <Page>
       <Header />
@@ -96,7 +97,7 @@ function PublicCoursePage() {
                   </MetaCard>
                   <MetaCard>
                     <span>Уроков</span>
-                    <strong>{course.topic_ids?.length || 0}</strong>
+                    <strong>{lessons.length || course.topic_ids?.length || 0}</strong>
                   </MetaCard>
                   <MetaCard>
                     <span>Участников</span>
@@ -125,6 +126,46 @@ function PublicCoursePage() {
                 <SectionText>
                   {course.public_info || "Подробное описание курса преподаватель добавит позже."}
                 </SectionText>
+              </SectionCard>
+
+              <SectionCard>
+                <SectionTitle>Группы и расписание</SectionTitle>
+                {groups.length === 0 ? (
+                  <SectionText>
+                    Подробное расписание по группам пока не опубликовано.
+                  </SectionText>
+                ) : (
+                  <List>
+                    {groups.map((group) => (
+                      <ListCard key={group.id}>
+                        <strong>{group.name}</strong>
+                        <span>{group.schedule_summary || "Расписание уточняется"}</span>
+                        {group.current_topic_name && (
+                          <small>Сейчас группа идет до урока: {group.current_topic_name}</small>
+                        )}
+                      </ListCard>
+                    ))}
+                  </List>
+                )}
+              </SectionCard>
+
+              <SectionCard>
+                <SectionTitle>Структура курса</SectionTitle>
+                {lessons.length === 0 ? (
+                  <SectionText>Список уроков появится позже.</SectionText>
+                ) : (
+                  <List>
+                    {lessons.map((lesson, index) => (
+                      <ListCard key={lesson.id}>
+                        <strong>
+                          {index + 1}. {lesson.name}
+                        </strong>
+                        <span>{lesson.description || "Краткое описание урока появится позже."}</span>
+                        <small>Задач: {lesson.total_tasks || 0}</small>
+                      </ListCard>
+                    ))}
+                  </List>
+                )}
               </SectionCard>
 
               <SectionCard id="course-request">
@@ -311,9 +352,9 @@ const VisualPattern = styled.div`
   height: 100%;
   min-height: 300px;
   background:
-    radial-gradient(circle at 24% 24%, rgba(255,255,255,0.24), transparent 20%),
-    linear-gradient(transparent 90%, rgba(255,255,255,0.08) 90%),
-    linear-gradient(90deg, transparent 88%, rgba(255,255,255,0.05) 88%);
+    radial-gradient(circle at 24% 24%, rgba(255, 255, 255, 0.24), transparent 20%),
+    linear-gradient(transparent 90%, rgba(255, 255, 255, 0.08) 90%),
+    linear-gradient(90deg, transparent 88%, rgba(255, 255, 255, 0.05) 88%);
   background-size: auto, 100% 36px, 36px 100%;
 `;
 
@@ -346,6 +387,28 @@ const SectionText = styled.p`
   color: var(--muted);
   line-height: 1.7;
   white-space: pre-wrap;
+`;
+
+const List = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const ListCard = styled.div`
+  padding: 16px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  span,
+  small {
+    color: var(--muted);
+    line-height: 1.6;
+  }
 `;
 
 const Form = styled.form`

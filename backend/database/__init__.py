@@ -12,10 +12,13 @@ from models.course import Course
 from models.course_request import CourseRequest
 from models.event import Event
 from models.group import Group
+from models.news_article import NewsArticle
+from models.student_course_enrollment import StudentCourseEnrollment
 from models.task import Task
 from models.topic import Topic
 from models.user import User, UserType
 from services.achievement_service import ensure_default_achievements
+from services.seed_news_content_service import ensure_default_news_articles
 from services.seed_learning_content_service import ensure_python_demo_learning_content
 
 
@@ -66,14 +69,17 @@ async def init_database():
             Task,
             Topic,
             Event,
+            NewsArticle,
             Achievement,
             AttendanceSession,
+            StudentCourseEnrollment,
         ]
         await init_beanie(database=database, document_models=document_models)
 
         await create_custom_indexes(database)
         await ensure_default_achievements()
         await ensure_default_staff_users()
+        await ensure_default_news_articles()
         await ensure_python_demo_learning_content()
     except Exception:
         logger.exception("Database initialization failed")
@@ -96,17 +102,27 @@ async def create_custom_indexes(database):
             partialFilterExpression={"phone": {"$type": "string"}},
         )
         await database.users.create_index("telegram_id", sparse=True)
+        await database.users.create_index("linked_student_ids")
 
         await database.courses.create_index("teacher_ids")
         await database.courses.create_index("student_ids")
         await database.course_requests.create_index("course_id")
         await database.course_requests.create_index("created_at")
+        await database.news_articles.create_index("slug", unique=True)
+        await database.news_articles.create_index("created_at")
 
         await database.groups.create_index("course_id")
         await database.groups.create_index("students")
         await database.groups.create_index("teachers")
         await database.attendance_sessions.create_index([("group_id", 1), ("date", 1)], unique=True)
+        await database.attendance_sessions.create_index("original_date")
         await database.attendance_sessions.create_index("course_id")
+        await database.student_course_enrollments.create_index(
+            [("student_id", 1), ("course_id", 1)],
+            unique=True,
+        )
+        await database.student_course_enrollments.create_index("group_id")
+        await database.student_course_enrollments.create_index("payment_mode")
 
         await database.tasks.create_index("topic_id")
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from models.achievement import AchievementTrigger
 from models.event import EventTag, ScheduleType
 from models.group import GroupScheduleSlot
+from models.student_course_enrollment import PaymentMode
 from models.task import TaskStatus
 from models.user import SubscriptionStatus, UserStatus, UserType
 
@@ -96,6 +97,7 @@ class CourseResponse(BaseModel):
     progress_percent: float = 0.0
     earned_points: int = 0
     can_edit: bool = False
+    finance: Optional["StudentCourseFinanceResponse"] = None
 
 
 class GroupResponse(BaseModel):
@@ -106,6 +108,9 @@ class GroupResponse(BaseModel):
     teachers: List[str] = Field(default_factory=list)
     schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
     schedule_summary: str = ""
+    current_topic_id: Optional[str] = None
+    current_topic_name: Optional[str] = None
+    leaderboard: List[LeaderboardEntryResponse] = Field(default_factory=list)
     total_students: int = 0
 
 
@@ -115,6 +120,15 @@ class CourseMemberResponse(BaseModel):
     surname: str
     tg_username: str
     avatar_url: Optional[str] = None
+
+
+class LinkedParentResponse(BaseModel):
+    user_id: str
+    name: str
+    surname: str
+    tg_username: str
+    telegram_id: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class TopicResponse(BaseModel):
@@ -159,6 +173,15 @@ class TaskSubmissionResponse(BaseModel):
     waiting_manual_review: bool = False
     review_comment: Optional[str] = None
     created_at: datetime
+
+
+class TaskCodeRunResponse(BaseModel):
+    input_data: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    success: bool = False
+    exit_code: int = 0
+    timed_out: bool = False
 
 
 class TaskResultResponse(BaseModel):
@@ -231,8 +254,38 @@ class CourseDetailResponse(BaseModel):
     leaderboard: List[LeaderboardEntryResponse] = Field(default_factory=list)
 
 
+class PublicCourseGroupResponse(BaseModel):
+    id: str
+    name: str
+    schedule_summary: str = ""
+    current_topic_name: Optional[str] = None
+
+
+class PublicCourseLessonResponse(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    order: int = 0
+    total_tasks: int = 0
+
+
 class PublicCourseDetailResponse(BaseModel):
     course: CourseResponse
+    groups: List[PublicCourseGroupResponse] = Field(default_factory=list)
+    lessons: List[PublicCourseLessonResponse] = Field(default_factory=list)
+
+
+class NewsArticleResponse(BaseModel):
+    id: str
+    slug: str
+    title: str
+    intro: str = ""
+    preview: str = ""
+    body: List[str] = Field(default_factory=list)
+    is_published: bool = True
+    created_at: datetime
+    updated_at: datetime
+    editable: bool = False
 
 
 class UserCoursesResponse(BaseModel):
@@ -273,6 +326,13 @@ class AchievementNoticeResponse(BaseModel):
     course_id: Optional[str] = None
 
 
+class StudentCourseAttendanceResponse(BaseModel):
+    total_sessions: int = 0
+    attended_sessions: int = 0
+    paid_sessions: int = 0
+    attendance_percent: float = 0.0
+
+
 class StudentCourseProgressResponse(BaseModel):
     course_id: str
     course_name: str
@@ -281,6 +341,25 @@ class StudentCourseProgressResponse(BaseModel):
     earned_points: int = 0
     total_points: int = 0
     progress_percent: float = 0.0
+    finance: Optional["StudentCourseFinanceResponse"] = None
+    attendance: Optional[StudentCourseAttendanceResponse] = None
+
+
+class MonthlyPaymentResponse(BaseModel):
+    month: str
+    label: str
+    note: str = ""
+    paid_at: datetime
+
+
+class StudentCourseFinanceResponse(BaseModel):
+    payment_mode: PaymentMode = PaymentMode.SUBSCRIPTION
+    debt_count: int = 0
+    debt_label: str = ""
+    enrolled_on: str = ""
+    unpaid_lessons_count: int = 0
+    paid_lessons_ahead: int = 0
+    monthly_payments: List[MonthlyPaymentResponse] = Field(default_factory=list)
 
 
 class StudentAdminResponse(BaseModel):
@@ -299,6 +378,7 @@ class StudentAdminResponse(BaseModel):
     total_points: int = 0
     progress_percent: float = 0.0
     course_progress: List[StudentCourseProgressResponse] = Field(default_factory=list)
+    parents: List[LinkedParentResponse] = Field(default_factory=list)
 
 
 class AdminStudentsResponse(BaseModel):
@@ -311,6 +391,7 @@ class DashboardResponse(BaseModel):
     courses: List[CourseResponse] = Field(default_factory=list)
     achievements: List[AchievementResponse] = Field(default_factory=list)
     managed_students: List[StudentAdminResponse] = Field(default_factory=list)
+    linked_students: List[StudentAdminResponse] = Field(default_factory=list)
     editable_achievements: List[AchievementResponse] = Field(default_factory=list)
     available_courses: List[CourseOptionResponse] = Field(default_factory=list)
     pending_reviews: List[DashboardPendingReviewResponse] = Field(default_factory=list)
@@ -362,6 +443,7 @@ class CourseRequestResponse(BaseModel):
 class AttendanceEntryResponse(BaseModel):
     student_id: str
     present: bool = False
+    paid: bool = False
     note: str = ""
 
 
@@ -369,6 +451,10 @@ class AttendanceSessionResponse(BaseModel):
     course_id: str
     group_id: str
     date: str
+    original_date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    is_cancelled: bool = False
     entries: List[AttendanceEntryResponse] = Field(default_factory=list)
     comment: str = ""
     updated_at: datetime
@@ -403,3 +489,5 @@ TokenResponse.model_rebuild()
 RegisterResponse.model_rebuild()
 TaskResponse.model_rebuild()
 DashboardResponse.model_rebuild()
+CourseResponse.model_rebuild()
+StudentCourseProgressResponse.model_rebuild()

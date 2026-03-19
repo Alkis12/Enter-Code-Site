@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class UserType(str, Enum):
+    PARENT = "parent"
     STUDENT = "student"
     TEACHER = "teacher"
     ADMIN = "admin"
@@ -46,6 +47,7 @@ class User(Document):
     phone: Optional[str] = Field(default=None, max_length=20)
     avatar_url: Optional[str] = Field(default=None)
     bio: Optional[str] = Field(default=None, max_length=500)
+    linked_student_ids: List[str] = Field(default_factory=list)
 
     access_token: Optional[str] = Field(default=None)
     refresh_token: Optional[str] = Field(default=None)

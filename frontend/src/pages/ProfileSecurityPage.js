@@ -86,11 +86,6 @@ function ProfileSecurityPage() {
             />
           </Field>
 
-          <Hint>
-            Поле смены пароля вынесено отдельно, чтобы не мешать его с
-            настройками профиля и курсами.
-          </Hint>
-
           <PrimaryButton type="submit" disabled={saving}>
             {saving ? "Обновляю..." : "Обновить пароль"}
           </PrimaryButton>
@@ -172,10 +167,6 @@ const Input = styled.input`
   background: #fff;
 `;
 
-const Hint = styled.p`
-  color: var(--muted);
-  line-height: 1.6;
-`;
 
 const PrimaryButton = styled.button`
   border: none;

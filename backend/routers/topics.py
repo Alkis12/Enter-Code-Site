@@ -6,7 +6,12 @@ from models.user import User, UserType
 from schemas.requests import CreateTopicRequest, UpdateTopicRequest
 from schemas.responses import LessonDetailResponse, MessageResponse
 from services.auth_service import get_current_user_dependency, require_role
-from services.learning_service import can_edit_course, get_courses_for_user
+from services.learning_service import (
+    can_edit_course,
+    get_courses_for_user,
+    get_group_visible_topic_order,
+    get_student_group_for_course,
+)
 from services.serializer_service import serialize_course, serialize_task, serialize_topic
 from models.task import Task
 
@@ -20,6 +25,20 @@ def lesson_is_available(topic: Topic, ordered_topics: list[Topic]) -> bool:
     if not ordered_topics:
         return True
     return str(ordered_topics[0].id) == str(topic.id)
+
+
+async def lesson_is_available_for_user(
+    user: User,
+    course: Course,
+    topic: Topic,
+    ordered_topics: list[Topic],
+    editable: bool,
+) -> bool:
+    if editable or user.user_type != UserType.STUDENT:
+        return True
+    student_group = await get_student_group_for_course(str(user.id), str(course.id))
+    visible_order = get_group_visible_topic_order(student_group, ordered_topics)
+    return topic.order <= visible_order
 
 
 @router.post("/add", response_model=MessageResponse)
@@ -114,7 +133,7 @@ async def topic_detail(
     editable = await can_edit_course(user, course)
     course_topics = await Topic.find(Topic.course_id == topic.course_id).to_list()
     course_topics.sort(key=lambda item: item.order)
-    can_access = editable or lesson_is_available(topic, course_topics)
+    can_access = await lesson_is_available_for_user(user, course, topic, course_topics, editable)
     if user.user_type == UserType.STUDENT and not can_access:
         raise HTTPException(status_code=403, detail="РЈСЂРѕРє РїРѕРєР° Р·Р°РєСЂС‹С‚")
     tasks = await Task.find(Task.topic_id == topic_id).to_list()
@@ -127,7 +146,7 @@ async def topic_detail(
                 item,
                 user,
                 can_edit=editable,
-                can_access=editable or lesson_is_available(item, course_topics),
+                can_access=await lesson_is_available_for_user(user, course, item, course_topics, editable),
             )
             for item in course_topics
         ],

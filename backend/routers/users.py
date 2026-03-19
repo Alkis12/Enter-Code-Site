@@ -10,7 +10,13 @@ from models.achievement import Achievement
 from models.course import Course
 from models.course_request import CourseRequest
 from models.user import User, UserStatus, UserType
-from schemas.requests import AdminCreateStudentRequest, AdminUpdateStudentRequest, ChangePasswordRequest, UpdateUserRequest
+from schemas.requests import (
+    AdminCreateStudentRequest,
+    AdminUpdateStudentRequest,
+    ChangePasswordRequest,
+    LinkParentRequest,
+    UpdateUserRequest,
+)
 from schemas.responses import AdminStudentsResponse, DashboardResponse, MessageResponse, StudentAdminResponse, UserResponse
 from services.auth_service import AuthService, get_current_user_dependency, get_current_user_with_role, require_role
 from services.learning_service import (
@@ -29,7 +35,7 @@ from services.serializer_service import (
     serialize_student_admin,
     serialize_user,
 )
-from services.user_service import get_by_id, get_by_tg_username
+from services.user_service import get_by_id, get_by_tg_username, get_linked_students_for_parent
 
 
 router = APIRouter(prefix="/users", tags=["Пользователи"])
@@ -137,14 +143,19 @@ async def dashboard(user: User = Depends(get_current_user_dependency)):
 
     achievements = await Achievement.find_all().to_list()
     course_map = {str(course.id): course for course in courses}
-    serialized_achievements = [serialize_achievement(item, user) for item in achievements]
-    editable_achievements = [
-        serialize_achievement(item, user, editable=True)
-        for item in achievements
-        if can_manage_achievement(user, item, course_map)
-    ]
+    if user.user_type == UserType.PARENT:
+        serialized_achievements = []
+        editable_achievements = []
+    else:
+        serialized_achievements = [serialize_achievement(item, user) for item in achievements]
+        editable_achievements = [
+            serialize_achievement(item, user, editable=True)
+            for item in achievements
+            if can_manage_achievement(user, item, course_map)
+        ]
 
     managed_students: List[StudentAdminResponse] = []
+    linked_students: List[StudentAdminResponse] = []
     available_courses = [await serialize_course_option(course) for course in manageable_courses]
     pending_reviews = await build_dashboard_pending_reviews(user, courses)
     course_requests = []
@@ -159,12 +170,18 @@ async def dashboard(user: User = Depends(get_current_user_dependency)):
             request_query = {"course_id": {"$in": list(manageable_course_ids)}}
         requests = await CourseRequest.find(request_query).sort("-created_at").to_list()
         course_requests = [serialize_course_request(item) for item in requests]
+    elif user.user_type == UserType.PARENT:
+        linked_students = [
+            await serialize_student_entry(student)
+            for student in await get_linked_students_for_parent(user)
+        ]
 
     return DashboardResponse(
         user=serialize_user(user),
         courses=serialized_courses,
         achievements=serialized_achievements,
         managed_students=managed_students,
+        linked_students=linked_students,
         editable_achievements=editable_achievements,
         available_courses=available_courses,
         pending_reviews=pending_reviews,
@@ -182,7 +199,8 @@ async def legacy_profile(
     access_token: str = Body(...),
     tg_username: str = Body(default=None),
 ):
-    user = await get_current_user_with_role(access_token, UserType.STUDENT)
+    auth_service = AuthService()
+    user = await auth_service.get_current_user(access_token)
     if not tg_username or tg_username == user.tg_username:
         return serialize_user(user)
     if user.user_type not in [UserType.TEACHER, UserType.ADMIN]:
@@ -357,6 +375,84 @@ async def update_student(
             payload.course_ids,
             payload.course_group_ids or {},
         )
+
+    return await serialize_student_entry(student, allowed_course_ids)
+
+
+@router.post("/students/{student_id}/parents", response_model=StudentAdminResponse)
+async def link_parent_to_student(
+    student_id: str,
+    payload: LinkParentRequest,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    student = await get_by_id(student_id)
+    if student.user_type != UserType.STUDENT:
+        raise HTTPException(status_code=400, detail="Родителя можно привязать только к ученику")
+
+    manageable_courses = await get_manageable_courses(user)
+    allowed_course_ids = {str(course.id) for course in manageable_courses}
+    await ensure_can_manage_student(user, student, manageable_courses)
+
+    parent = await get_by_tg_username(payload.tg_username)
+    if parent:
+        if parent.user_type != UserType.PARENT:
+            raise HTTPException(status_code=400, detail="Этот логин уже занят не родителем")
+    else:
+        if not payload.name or not payload.surname or not payload.password:
+            raise HTTPException(
+                status_code=400,
+                detail="Для нового родителя нужны имя, фамилия и пароль",
+            )
+        if payload.phone and await User.find_one(User.phone == payload.phone):
+            raise HTTPException(status_code=400, detail="Пользователь с таким телефоном уже существует")
+
+        auth_service = AuthService()
+        parent = User(
+            name=payload.name,
+            surname=payload.surname,
+            tg_username=payload.tg_username,
+            telegram_id=payload.telegram_id,
+            phone=payload.phone,
+            user_type=UserType.PARENT,
+            password_hash=auth_service.get_password_hash(payload.password),
+            linked_student_ids=[str(student.id)],
+        )
+        await parent.insert()
+        return await serialize_student_entry(student, allowed_course_ids)
+
+    if str(student.id) not in parent.linked_student_ids:
+        parent.linked_student_ids.append(str(student.id))
+        parent.touch()
+        await parent.save()
+
+    return await serialize_student_entry(student, allowed_course_ids)
+
+
+@router.delete("/students/{student_id}/parents/{parent_id}", response_model=StudentAdminResponse)
+async def unlink_parent_from_student(
+    student_id: str,
+    parent_id: str,
+    user: User = Depends(require_role(UserType.TEACHER)),
+):
+    student = await get_by_id(student_id)
+    if student.user_type != UserType.STUDENT:
+        raise HTTPException(status_code=400, detail="Родителя можно отвязать только от ученика")
+
+    manageable_courses = await get_manageable_courses(user)
+    allowed_course_ids = {str(course.id) for course in manageable_courses}
+    await ensure_can_manage_student(user, student, manageable_courses)
+
+    parent = await get_by_id(parent_id)
+    if parent.user_type != UserType.PARENT:
+        raise HTTPException(status_code=400, detail="Пользователь не является родителем")
+
+    parent.linked_student_ids = [
+        linked_student_id
+        for linked_student_id in parent.linked_student_ids
+        if linked_student_id != str(student.id)
+    ]
+    parent.touch()
+    await parent.save()
 
     return await serialize_student_entry(student, allowed_course_ids)
 
