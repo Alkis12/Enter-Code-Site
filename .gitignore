@@ -2,3 +2,7 @@ __pycache__/
 app.log
 /node_modules
 backend/.venv
+.env
+.env.*
+backend/.env
+frontend/.env

@@ -1,171 +1,115 @@
 from fastapi import APIRouter, Body, Depends, HTTPException
-from schemas.requests import LoginRequest, RegisterRequest, RefreshRequest, ChangePasswordRequest, UpdateUserRequest
-from schemas.responses import UserResponse, TokenResponse, RegisterResponse, MessageResponse
-from services.auth_service import get_auth_service, get_current_user_dependency, get_current_user_bearer_dependency
-from services.user_service import get_by_id
+
 from models.user import UserType
-from pydantic import BaseModel
-from typing import Optional
-import logging
+from schemas.requests import ChangePasswordRequest, LoginRequest, RefreshRequest, RegisterRequest, UpdateUserRequest
+from schemas.responses import MessageResponse, RegisterResponse, TokenResponse, UserResponse
+from services.auth_service import get_auth_service
+from services.serializer_service import serialize_achievement_notice, serialize_user
+from services.user_service import get_by_tg_username
+
 
 router = APIRouter(prefix="/auth", tags=["Аутентификация"])
-logger = logging.getLogger("auth")
 
-@router.post("/register", response_model=RegisterResponse, summary="Регистрация нового пользователя")
+
+@router.post("/register", response_model=RegisterResponse)
 async def register_user(
-    register_data: RegisterRequest = Body(..., description="Данные для регистрации нового пользователя"),
-    auth_service = Depends(get_auth_service),
+    register_data: RegisterRequest = Body(...),
 ):
-    logger.info(f"User registration: {register_data.tg_username}")
-    try:
-        user = await auth_service.register(register_data)
-        
-        # Создаем токены для нового пользователя
-        login_data = LoginRequest(
-            tg_username=register_data.tg_username,
-            password=register_data.password
-        )
-        access_token, refresh_token = await auth_service.login(login_data)
-        
-        return RegisterResponse(
-            message=f"Пользователь {user.tg_username} успешно зарегистрирован",
-            success=True,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user_id=str(user.id)
-        )
-    except Exception as e:
-        logger.error(f"User registration error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    raise HTTPException(
+        status_code=403,
+        detail="Самостоятельная регистрация отключена. Обратитесь к преподавателю.",
+    )
 
-@router.post("/login", response_model=TokenResponse, summary="Авторизация пользователя")
+
+@router.post("/login", response_model=TokenResponse)
 async def login(
     login_data: LoginRequest = Body(...),
-    auth_service = Depends(get_auth_service),
+    auth_service=Depends(get_auth_service),
 ):
-    access_token, refresh_token = await auth_service.login(login_data)
-    
-    # Получаем пользователя для извлечения user_id
+    access_token, refresh_token, unlocked = await auth_service.login(login_data)
     user = await auth_service.get_current_user(access_token)
-    
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        user_id=str(user.id)
+        user_id=str(user.id),
+        user_type=user.user_type,
+        newly_unlocked_achievements=[
+            serialize_achievement_notice(item) for item in unlocked
+        ],
     )
 
-@router.post("/me", response_model=UserResponse, summary="Информация о пользователе (по access_token)")
+
+@router.post("/me", response_model=UserResponse)
 async def user_info(
     access_token: str = Body(...),
-    auth_service = Depends(get_auth_service)
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info(f"Getting user information")
-    try:
-        user = await auth_service.get_user_info(access_token)
-        return UserResponse(
-            user_id=str(user.id),
-            name=user.name,
-            surname=user.surname,
-            tg_username=user.tg_username,
-            user_type=user.user_type,
-            status=user.status,
-            phone=user.phone,
-            avatar_url=user.avatar_url,
-            bio=user.bio,
-            subscription_status=user.subscription_status if user.user_type == UserType.STUDENT else None,
-            lessons_remaining=user.lessons_remaining if user.user_type == UserType.STUDENT else None
-        )
-    except Exception as e:
-        logger.error(f"Error getting user information: {e}")
-        raise HTTPException(status_code=401, detail=str(e))
+    user = await auth_service.get_user_info(access_token)
+    return serialize_user(user)
 
-@router.post("/refresh", response_model=dict, summary="Обновить access_token по refresh_token")
+
+@router.post("/refresh", response_model=dict)
 async def refresh_token(
-    refresh_data: RefreshRequest = Body(..., description="Refresh токен для обновления access токена"),
-    auth_service = Depends(get_auth_service),
+    refresh_data: RefreshRequest = Body(...),
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info(f"Refreshing access token")
-    try:
-        new_access_token = await auth_service.refresh_access_token(refresh_data)
-        return {
-            "access_token": new_access_token
-        }
-    except Exception as e:
-        logger.error(f"Error refreshing access token: {e}")
-        raise HTTPException(status_code=401, detail=str(e))
+    access_token = await auth_service.refresh_access_token(refresh_data)
+    return {"access_token": access_token}
 
-@router.post("/change_password", response_model=MessageResponse, summary="Смена пароля пользователя")
+
+@router.post("/change_password", response_model=MessageResponse)
 async def change_password(
-    data: ChangePasswordRequest = Body(..., description="Данные для смены пароля (старый и новый)"),
-    access_token: str = Body(..., description="Токен доступа текущего пользователя"),
-    auth_service = Depends(get_auth_service),
+    data: ChangePasswordRequest = Body(...),
+    access_token: str = Body(...),
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info("User password change")
-    try:
-        user = await auth_service.get_current_user(access_token)
-        if not auth_service.verify_password(data.old_password, user.password_hash):
-            raise HTTPException(status_code=400, detail="Старый пароль неверен")
-        user.password_hash = auth_service.get_password_hash(data.new_password)
-        await user.save()
-        return MessageResponse(message="Пароль успешно изменён", success=True)
-    except Exception as e:
-        logger.error(f"Password change error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    user = await auth_service.get_current_user(access_token)
+    if not auth_service.verify_password(data.old_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Текущий пароль неверный")
+    user.password_hash = auth_service.get_password_hash(data.new_password)
+    user.touch()
+    await user.save()
+    return MessageResponse(message="Пароль успешно изменен", success=True)
 
-@router.post("/update_user", response_model=MessageResponse, summary="Обновление данных пользователя")
+
+@router.post("/update_user", response_model=MessageResponse)
 async def update_user(
-    data: UpdateUserRequest = Body(..., description="Данные для обновления профиля пользователя"),
-    access_token: str = Body(..., description="Токен доступа текущего пользователя"),
-    auth_service = Depends(get_auth_service),
+    data: UpdateUserRequest = Body(...),
+    access_token: str = Body(...),
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info("User data update")
-    try:
-        user = await auth_service.get_current_user(access_token)
-        
-        # Проверяем уникальность tg_username если он изменяется
-        if data.tg_username is not None and data.tg_username != user.tg_username:
-            from services.user_service import get_by_tg_username
-            existing_user = await get_by_tg_username(data.tg_username)
-            if existing_user:
-                raise HTTPException(status_code=400, detail="Пользователь с таким tg_username уже существует")
-            user.tg_username = data.tg_username
-            
-        if data.phone is not None:
-            user.phone = data.phone
-        if data.avatar_url is not None:
-            user.avatar_url = data.avatar_url
-        if data.bio is not None:
-            user.bio = data.bio
-            
-        await user.save()
-        return MessageResponse(message="Данные пользователя успешно обновлены", success=True)
-    except Exception as e:
-        logger.error(f"User data update error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    user = await auth_service.get_current_user(access_token)
 
-@router.post("/logout", response_model=MessageResponse, summary="Выход пользователя (инвалидация токенов)")
+    if data.tg_username and data.tg_username != user.tg_username:
+        existing = await get_by_tg_username(data.tg_username)
+        if existing and str(existing.id) != str(user.id):
+            raise HTTPException(status_code=400, detail="Логин уже занят")
+        user.tg_username = data.tg_username
+
+    for field in ["name", "surname", "telegram_id", "phone", "avatar_url", "bio"]:
+        value = getattr(data, field)
+        if value is not None:
+            setattr(user, field, value)
+
+    user.touch()
+    await user.save()
+    return MessageResponse(message="Данные пользователя обновлены", success=True)
+
+
+@router.post("/logout", response_model=MessageResponse)
 async def logout(
-    access_token: str = Body(..., description="Токен доступа для инвалидации"),
-    refresh_token: str = Body(..., description="Refresh токен для инвалидации"),
-    auth_service = Depends(get_auth_service),
+    access_token: str = Body(...),
+    refresh_token: str = Body(...),
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info("User logout")
-    try:
-        await auth_service.logout(access_token, refresh_token)
-        return MessageResponse(message="Вы успешно вышли из системы", success=True)
-    except Exception as e:
-        logger.error(f"User logout error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    await auth_service.logout(access_token, refresh_token)
+    return MessageResponse(message="Вы успешно вышли из системы", success=True)
 
-@router.delete("/delete_account", response_model=MessageResponse, summary="Удаление аккаунта пользователя")
+
+@router.delete("/delete_account", response_model=MessageResponse)
 async def delete_account(
-    access_token: str = Body(..., description="Токен доступа пользователя для удаления аккаунта"),
-    auth_service = Depends(get_auth_service),
+    access_token: str = Body(...),
+    auth_service=Depends(get_auth_service),
 ):
-    logger.info("User account deletion")
-    try:
-        await auth_service.delete_account(access_token)
-        return MessageResponse(message="Аккаунт успешно удалён", success=True)
-    except Exception as e:
-        logger.error(f"Account deletion error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    await auth_service.delete_account(access_token)
+    return MessageResponse(message="Аккаунт удален", success=True)

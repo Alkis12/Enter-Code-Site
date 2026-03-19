@@ -1,15 +1,21 @@
+from typing import Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
+
+from models.achievement import AchievementTrigger
+from models.event import EventTag, ScheduleType
+from models.group import GroupScheduleSlot
 from models.user import UserType
 
-# Запрос на вход
+
 class LoginRequest(BaseModel):
     tg_username: str = Field(..., min_length=2, max_length=33)
     password: str = Field(..., min_length=6)
 
-# Запрос на регистрацию
+
 class RegisterRequest(BaseModel):
     tg_username: str = Field(..., min_length=2, max_length=33)
+    telegram_id: Optional[str] = Field(default=None, max_length=100)
     password: str = Field(..., min_length=6)
     password_repeat: str = Field(..., min_length=6)
     name: str = Field(..., min_length=1, max_length=100)
@@ -19,73 +25,227 @@ class RegisterRequest(BaseModel):
     avatar_url: Optional[str] = Field(default=None)
     bio: Optional[str] = Field(default=None, max_length=500)
 
-# Базовые запросы аутентификации
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
+
 class ChangePasswordRequest(BaseModel):
-    old_password: str
+    old_password: str = Field(..., min_length=6)
     new_password: str = Field(..., min_length=6)
 
+
 class UpdateUserRequest(BaseModel):
-    tg_username: Optional[str] = Field(default=None, min_length=2, max_length=33, pattern=r"^[a-zA-Z0-9_]{1,50}$")
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    surname: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    tg_username: Optional[str] = Field(
+        default=None,
+        min_length=2,
+        max_length=33,
+        pattern=r"^[a-zA-Z0-9_]{1,50}$",
+    )
+    telegram_id: Optional[str] = Field(default=None, max_length=100)
     phone: Optional[str] = Field(default=None, max_length=20)
-    avatar_url: Optional[str] = None
+    avatar_url: Optional[str] = Field(default=None)
     bio: Optional[str] = Field(default=None, max_length=500)
 
-# Запросы для курсов
+
 class CreateCourseRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(default="", max_length=1000)
+    description: str = Field(default="", max_length=2000)
+    public_info: str = Field(default="", max_length=12000)
+    accent_color: str = Field(default="#16a085", max_length=20)
+    cover_image: str = Field(default="")
+    schedule_weekdays: List[int] = Field(default_factory=list)
+    schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    student_ids: List[str] = Field(default_factory=list)
+    teacher_ids: List[str] = Field(default_factory=list)
+
 
 class UpdateCourseRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
-    description: Optional[str] = Field(default=None, max_length=1000)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    public_info: Optional[str] = Field(default=None, max_length=12000)
+    accent_color: Optional[str] = Field(default=None, max_length=20)
+    cover_image: Optional[str] = Field(default=None)
+    schedule_weekdays: Optional[List[int]] = None
+    schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
 
-# Запросы для групп
+
+class SetCourseMembersRequest(BaseModel):
+    student_ids: List[str] = Field(default_factory=list)
+    teacher_ids: List[str] = Field(default_factory=list)
+
+
 class CreateGroupRequest(BaseModel):
     course_id: str
     name: str = Field(..., min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
 
+
 class UpdateGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
 
+
 class AddStudentsToGroupRequest(BaseModel):
-    student_usernames: List[str] = Field(..., description="Список Telegram username студентов")
+    student_usernames: List[str] = Field(default_factory=list)
+
 
 class AddTeachersToGroupRequest(BaseModel):
-    teacher_usernames: List[str] = Field(..., description="Список Telegram username преподавателей")
+    teacher_usernames: List[str] = Field(default_factory=list)
 
-# Запросы для тем
+
 class CreateTopicRequest(BaseModel):
     course_id: str
     name: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(default="", max_length=1000)
+    description: str = Field(default="", max_length=2000)
+    content: str = Field(default="", max_length=30000)
     resources: List[str] = Field(default_factory=list)
+    order: int = Field(default=0, ge=0)
+
 
 class UpdateTopicRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
-    description: Optional[str] = Field(default=None, max_length=1000)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    content: Optional[str] = Field(default=None, max_length=30000)
     resources: Optional[List[str]] = None
+    order: Optional[int] = Field(default=None, ge=0)
+    is_open: Optional[bool] = None
 
-# Запросы для задач
+
+class TaskTestCaseRequest(BaseModel):
+    input_data: str = Field(default="")
+    expected_output: str = Field(default="")
+
+
 class CreateTaskRequest(BaseModel):
     topic_id: str
+    title: str = Field(..., min_length=1, max_length=200)
     condition: str = Field(..., min_length=1)
     attachments: List[str] = Field(default_factory=list)
+    points: int = Field(default=10, ge=0)
+    starter_code: str = Field(default="")
+    language: str = Field(default="python", max_length=20)
+    requires_manual_review: bool = Field(default=False)
+    tests: List[TaskTestCaseRequest] = Field(default_factory=list)
+    order: int = Field(default=0, ge=0)
+
 
 class UpdateTaskRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     condition: Optional[str] = Field(default=None, min_length=1)
     attachments: Optional[List[str]] = None
+    points: Optional[int] = Field(default=None, ge=0)
+    starter_code: Optional[str] = None
+    language: Optional[str] = Field(default=None, max_length=20)
+    requires_manual_review: Optional[bool] = None
+    tests: Optional[List[TaskTestCaseRequest]] = None
+    order: Optional[int] = Field(default=None, ge=0)
+
 
 class SubmitTaskSolutionRequest(BaseModel):
-    task_id: str
-    solution: str = Field(..., min_length=1)
-    attachments: List[str] = Field(default_factory=list)
+    code: str = Field(..., min_length=1)
 
-# Запросы для абонементов
+
+class ReviewTaskSubmissionRequest(BaseModel):
+    approve: bool
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
 class ExtendSubscriptionRequest(BaseModel):
-    tg_username: str = Field(..., description="Telegram username пользователя для продления абонемента")
-    lessons_count: int = Field(..., ge=1, description="Количество занятий для добавления")
+    tg_username: str
+    lessons_count: int = Field(..., ge=1)
+
+
+class CreateEventRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    schedule_type: ScheduleType = Field(default=ScheduleType.WEEKLY)
+    date: Optional[str] = Field(default=None, description="YYYY-MM-DD")
+    weekday: Optional[int] = Field(default=None, ge=0, le=6)
+    start_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    image_url: Optional[str] = Field(default=None, max_length=500)
+    button_color: Optional[str] = Field(default=None, max_length=20)
+    card_color: Optional[str] = Field(default=None, max_length=20)
+    text_color: Optional[str] = Field(default=None, max_length=20)
+    tags: List[EventTag] = Field(default_factory=list)
+    is_active: bool = Field(default=True)
+
+
+class UpdateEventRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    schedule_type: Optional[ScheduleType] = None
+    date: Optional[str] = Field(default=None, description="YYYY-MM-DD")
+    weekday: Optional[int] = Field(default=None, ge=0, le=6)
+    start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    image_url: Optional[str] = Field(default=None, max_length=500)
+    button_color: Optional[str] = Field(default=None, max_length=20)
+    card_color: Optional[str] = Field(default=None, max_length=20)
+    text_color: Optional[str] = Field(default=None, max_length=20)
+    tags: Optional[List[EventTag]] = None
+    is_active: Optional[bool] = None
+
+
+class AdminCreateStudentRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    surname: str = Field(..., min_length=1, max_length=100)
+    tg_username: str = Field(..., min_length=2, max_length=33)
+    telegram_id: Optional[str] = Field(default=None, max_length=100)
+    password: str = Field(..., min_length=6)
+    phone: Optional[str] = Field(default=None, max_length=20)
+    course_ids: List[str] = Field(default_factory=list)
+    course_group_ids: Dict[str, str] = Field(default_factory=dict)
+
+
+class AdminUpdateStudentRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    surname: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    tg_username: Optional[str] = Field(default=None, min_length=2, max_length=33)
+    telegram_id: Optional[str] = Field(default=None, max_length=100)
+    password: Optional[str] = Field(default=None, min_length=6)
+    phone: Optional[str] = Field(default=None, max_length=20)
+    status: Optional[str] = None
+    course_ids: Optional[List[str]] = None
+    course_group_ids: Optional[Dict[str, str]] = None
+
+
+class CreateCourseGroupRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    student_ids: List[str] = Field(default_factory=list)
+    schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
+
+
+class UpdateCourseGroupRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    student_ids: Optional[List[str]] = None
+    schedule_slots: Optional[List[GroupScheduleSlot]] = None
+
+
+class CreateCourseRequestLeadRequest(BaseModel):
+    contact_name: Optional[str] = Field(default=None, max_length=120)
+    contact_value: str = Field(..., min_length=3, max_length=300)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class UpdateAchievementRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    description: Optional[str] = Field(default=None, max_length=500)
+    avatar_url: Optional[str] = Field(default=None, max_length=500)
+    is_hidden: Optional[bool] = None
+
+
+class AttendanceEntryRequest(BaseModel):
+    student_id: str
+    present: bool = False
+    note: str = Field(default="", max_length=500)
+
+
+class SaveAttendanceSessionRequest(BaseModel):
+    entries: List[AttendanceEntryRequest] = Field(default_factory=list)
+    comment: str = Field(default="", max_length=2000)

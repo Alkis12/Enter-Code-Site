@@ -1,27 +1,33 @@
-from typing import List
+from typing import List, Optional
+
 from beanie import Document
-from pydantic import Field
+from pydantic import BaseModel, Field
+
+
+class GroupScheduleSlot(BaseModel):
+    weekday: int = Field(..., ge=0, le=6)
+    start_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+
 
 class Group(Document):
-    """
-    Группа: принадлежит курсу (course_id), содержит студентов (user_id) и преподавателей (user_id).
-    """
-    course_id: str = Field(..., description="ID курса, к которому относится группа")
-    name: str = Field(..., description="Название группы")
-    students: List[str] = Field(default_factory=list, description="Список user_id студентов в группе")
-    teachers: List[str] = Field(default_factory=list, description="Список user_id преподавателей в группе")
-    description: str = Field(default="", description="Описание группы")
+    course_id: str = Field(...)
+    name: str = Field(...)
+    students: List[str] = Field(default_factory=list)
+    teachers: List[str] = Field(default_factory=list)
+    description: str = Field(default="")
+    schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
 
     async def get_total_students(self) -> int:
-        """Возвращает общее количество студентов в группе"""
         return len(self.students)
 
     async def get_user_success_percent(self, user_id: str) -> float:
-        """Возвращает процент успешно выполненных задач для студента в группе"""
+        from models.course import Course
         from models.topic import Topic
+
         total = 0
         solved = 0
-        course = await self.get(self.course_id)
+        course = await Course.get(self.course_id)
         if course:
             for topic_id in course.topic_ids:
                 topic = await Topic.get(topic_id)

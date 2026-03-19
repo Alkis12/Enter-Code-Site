@@ -1,83 +1,279 @@
-import React from "react";
+import React, { useState } from "react";
 import styled from "styled-components";
-import logo from "../../assets/LoginAssets/logo.png";
-import GlobalStyle from "../../styles/GlobalStyle";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import LanguageSwitchBtn from "./LanguageSwitchBtn";
 
-const MainHeader = styled.div`
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: #fa7f2f;
-  padding: 0px;
-  width: 100%;
-`;
-const HeaderMenu = styled.nav`
-  display: flex;
-  gap: 10vh;
-  align-items: center;
-  justify-content: center;
+import logo from "../../assets/LoginAssets/logo.png";
+import { getCurrentUserType, isAuthenticated, logout } from "../../api/auth";
+
+function Header() {
+  const navigate = useNavigate();
+  const { i18n } = useTranslation();
+  const authed = isAuthenticated();
+  const userType = getCurrentUserType();
+  const canManageStudents = userType === "teacher" || userType === "admin";
+  const canManageAchievements = userType === "teacher" || userType === "admin";
+  const canManageTeaching = userType === "teacher" || userType === "admin";
+  const showManagementPanel = canManageStudents || canManageAchievements || canManageTeaching;
+  const currentLanguage = i18n.language?.startsWith("en") ? "en" : "ru";
+  const [showMenu, setShowMenu] = useState(false);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
+
+  return (
+    <Bar>
+      <Inner>
+        <LogoWrap to="/">
+          <img src={logo} alt="Enter Code" />
+        </LogoWrap>
+
+        <Nav>
+          <NavItem to="/news">Новости</NavItem>
+          <NavItem to="/myschedule">Мое расписание</NavItem>
+          {authed && <NavItem to="/mycourses">Мои курсы</NavItem>}
+          {authed ? (
+            <ProfileItem to="/profile">Мой профиль</ProfileItem>
+          ) : (
+            <ProfileItem to="/login">Войти</ProfileItem>
+          )}
+        </Nav>
+
+        <RightSide>
+          {authed && showManagementPanel && (
+            <ManagementWrap>
+              <ManagementButton
+                type="button"
+                onClick={() => setShowMenu((prev) => !prev)}
+                aria-label="Панель управления"
+              >
+                <MenuLines>
+                  <span />
+                  <span />
+                  <span />
+                </MenuLines>
+              </ManagementButton>
+              {showMenu && (
+                <ManagementPanel>
+                  {canManageStudents && (
+                    <ManagementLink to="/students" onClick={() => setShowMenu(false)}>
+                      Ученики
+                    </ManagementLink>
+                  )}
+                  {canManageTeaching && (
+                    <ManagementLink to="/teaching" onClick={() => setShowMenu(false)}>
+                      Занятия
+                    </ManagementLink>
+                  )}
+                  {canManageAchievements && (
+                    <ManagementLink
+                      to={userType === "admin" ? "/achievements/overview" : "/achievements/manage"}
+                      onClick={() => setShowMenu(false)}
+                    >
+                      Достижения
+                    </ManagementLink>
+                  )}
+                  <ManagementLink to="/profile/edit" onClick={() => setShowMenu(false)}>
+                    Редактор аккаунтов
+                  </ManagementLink>
+                </ManagementPanel>
+              )}
+            </ManagementWrap>
+          )}
+          <LangSwitcher>
+            <LangButton
+              type="button"
+              $active={currentLanguage === "ru"}
+              onClick={() => i18n.changeLanguage("ru")}
+            >
+              RU
+            </LangButton>
+            <LangButton
+              type="button"
+              $active={currentLanguage === "en"}
+              onClick={() => i18n.changeLanguage("en")}
+            >
+              EN
+            </LangButton>
+          </LangSwitcher>
+          {authed && <LogoutButton onClick={handleLogout}>Выход</LogoutButton>}
+        </RightSide>
+      </Inner>
+    </Bar>
+  );
+}
+
+export default Header;
+
+const Bar = styled.header`
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: #ff7f2a;
+  box-shadow: 0 10px 24px rgba(255, 127, 42, 0.24);
 `;
 
-const StyledLink = styled(NavLink)`
+const Inner = styled.div`
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+
+  @media (max-width: 900px) {
+    flex-wrap: wrap;
+  }
+`;
+
+const LogoWrap = styled(NavLink)`
+  display: inline-flex;
+  align-items: center;
+
+  img {
+    width: 92px;
+    height: auto;
+  }
+`;
+
+const Nav = styled.nav`
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+  flex: 1;
+`;
+
+const BaseItem = styled(NavLink)`
+  color: #fffaf5;
   text-decoration: none;
-  color: white;
-  font-weight: bold;
-  padding: 8px 16px;
-  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 2px solid transparent;
+  transition: background 0.2s ease, transform 0.2s ease;
 
   &.active {
-    background-color: #fa7f2f;
-    color: rgb(255, 255, 255);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    border: 3px solid rgb(255, 255, 255);
+    background: rgba(255, 255, 255, 0.18);
+    border-color: #fff7ef;
   }
 
   &:hover {
-    text-decoration: underline;
+    transform: translateY(-1px);
   }
 `;
 
-const StyledProfileLink = styled(NavLink)`
-  text-decoration: none;
-  color: white;
-  font-weight: bold;
-  padding: 8px 16px;
-  border-radius: 8px;
-  background-color: rgb(255, 255, 255);
-  color: #fa7f2f;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+const NavItem = styled(BaseItem)``;
+
+const ProfileItem = styled(BaseItem)`
+  background: #fff8f1;
+  color: #ff7f2a;
 
   &.active {
-    background-color: #fa7f2f;
-    color: rgb(255, 255, 255);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    border: 3px solid rgb(255, 255, 255);
+    background: #fff8f1;
+    color: #ff7f2a;
+    border-color: #ffd5b3;
   }
 `;
 
-const Header = () => {
-  const { t } = useTranslation();
-  return (
-    <div>
-      <MainHeader>
-        <img src={logo} alt="logo" width="100px" />
-        <HeaderMenu>
-          <StyledLink to="/news">{t("Header.news")}</StyledLink>
-          <StyledLink to="/mycourses">{t("Header.courses")}</StyledLink>
-          <StyledLink to="/myschedule">{t("Header.schedule")}</StyledLink>
-          <StyledProfileLink to="/profile">
-            {t("Header.profile")}
-          </StyledProfileLink>
-          <LanguageSwitchBtn />
-        </HeaderMenu>
-      </MainHeader>
-    </div>
-  );
-};
+const RightSide = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  position: relative;
+`;
 
-export default Header;
+const ManagementWrap = styled.div`
+  position: relative;
+`;
+
+const ManagementButton = styled.button`
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fffaf5;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+`;
+
+const MenuLines = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  span {
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    display: block;
+  }
+`;
+
+const ManagementPanel = styled.div`
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 240px;
+  padding: 10px;
+  border-radius: 18px;
+  background: #fff8f1;
+  border: 1px solid #ffd5b3;
+  box-shadow: 0 20px 32px rgba(25, 32, 48, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 30;
+`;
+
+const ManagementLink = styled(NavLink)`
+  text-decoration: none;
+  padding: 12px 14px;
+  border-radius: 12px;
+  color: #33251b;
+  font-weight: 700;
+
+  &.active,
+  &:hover {
+    background: rgba(255, 127, 42, 0.12);
+  }
+`;
+
+const LangSwitcher = styled.div`
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(255, 248, 241, 0.9);
+`;
+
+const LangButton = styled.button`
+  min-width: 48px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: ${(props) => (props.$active ? "#ff7f2a" : "transparent")};
+  color: ${(props) => (props.$active ? "#fffaf5" : "#ff7f2a")};
+  text-align: center;
+  font-weight: 800;
+  cursor: pointer;
+`;
+
+const LogoutButton = styled.button`
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fffaf5;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+`;

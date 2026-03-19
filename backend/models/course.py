@@ -1,49 +1,68 @@
-from typing import List
+from datetime import datetime
+from typing import List, Optional
+
 from beanie import Document
 from pydantic import Field
-from models.task import Task, TaskStatus
-from models.topic import Topic
-from models.group import Group
+
 
 class Course(Document):
-    """
-    Курс: содержит группы (group_ids) и темы (topic_ids).
-    Все пользователи (студенты, преподаватели) привязаны к группам, а не к курсу напрямую.
-    """
-    name: str = Field(..., description="Название курса")
-    description: str = Field(default="", description="Описание курса")
-    group_ids: List[str] = Field(default_factory=list, description="Список ID групп в курсе")
-    topic_ids: List[str] = Field(default_factory=list, description="Список ID тем в курсе")
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    public_info: str = Field(default="", max_length=12000)
+    group_ids: List[str] = Field(default_factory=list)
+    topic_ids: List[str] = Field(default_factory=list)
+    teacher_ids: List[str] = Field(default_factory=list)
+    student_ids: List[str] = Field(default_factory=list)
+    accent_color: str = Field(default="#16a085", max_length=20)
+    cover_image: str = Field(default="")
+    schedule_weekdays: List[int] = Field(default_factory=list)
+    schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def touch(self) -> None:
+        self.updated_at = datetime.utcnow()
 
     async def get_total_tasks(self) -> int:
-        """Возвращает общее количество задач в курсе"""
-        count = 0
+        from models.topic import Topic
+
+        total = 0
         for topic_id in self.topic_ids:
             topic = await Topic.get(topic_id)
             if topic:
-                count += len(topic.task_ids)
-        return count
+                total += len(topic.task_ids)
+        return total
+
+    async def get_total_points(self) -> int:
+        from models.topic import Topic
+
+        total = 0
+        for topic_id in self.topic_ids:
+            topic = await Topic.get(topic_id)
+            if topic:
+                total += await topic.get_total_points()
+        return total
 
     async def get_total_students(self) -> int:
-        """Возвращает общее количество студентов во всех группах курса"""
-        count = 0
-        for group_id in self.group_ids:
-            group = await Group.get(group_id)
-            if group:
-                count += len(group.students)
-        return count
+        return len(set(self.student_ids))
 
-    async def get_user_success_percent(self, user_id: str) -> float:
-        """Возвращает процент успешно выполненных задач для студента в курсе"""
-        total = await self.get_total_tasks()
-        if total == 0:
-            return 0.0
-        solved = 0
+    async def get_user_points(self, user_id: str) -> int:
+        from models.topic import Topic
+
+        total = 0
         for topic_id in self.topic_ids:
             topic = await Topic.get(topic_id)
             if topic:
-                solved += await topic.get_user_solved_count(user_id)
-        return solved / total * 100
+                total += await topic.get_user_points(user_id)
+        return total
+
+    async def get_user_success_percent(self, user_id: str) -> float:
+        total_points = await self.get_total_points()
+        if total_points <= 0:
+            return 0.0
+        user_points = await self.get_user_points(user_id)
+        return round(user_points / total_points * 100, 2)
 
     class Settings:
         name = "courses"
