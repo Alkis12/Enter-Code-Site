@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 
 import Header from "../components/Header/Header";
 import { clearSession, isAuthenticated, logout } from "../api/auth";
@@ -37,6 +37,7 @@ function getRoleLabel(userType) {
 }
 
 function ProfilePage() {
+  const location = useLocation();
   const authed = isAuthenticated();
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -79,6 +80,7 @@ function ProfilePage() {
   const isStudent = user?.user_type === "student";
   const isAdmin = user?.user_type === "admin";
   const isParent = user?.user_type === "parent";
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
   const courseDebts = courses.filter(
     (course) => Number(course?.finance?.debt_count || 0) > 0
   );
@@ -263,7 +265,9 @@ function ProfilePage() {
               </div>
 
               <ActionRow>
-                <PrimaryLink to="/profile/edit">Редактировать профиль</PrimaryLink>
+                <PrimaryLink to="/profile/edit" state={{ from: currentPath }}>
+                  Редактировать профиль
+                </PrimaryLink>
                 <DangerAction
                   type="button"
                   onClick={async () => {

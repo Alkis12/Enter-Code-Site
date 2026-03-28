@@ -18,8 +18,8 @@ from models.task import Task
 from models.topic import Topic
 from models.user import User, UserType
 from services.achievement_service import ensure_default_achievements
+from services.seed_learning_content_service import ensure_demo_learning_content
 from services.seed_news_content_service import ensure_default_news_articles
-from services.seed_learning_content_service import ensure_python_demo_learning_content
 
 
 load_dotenv()
@@ -80,7 +80,7 @@ async def init_database():
         await ensure_default_achievements()
         await ensure_default_staff_users()
         await ensure_default_news_articles()
-        await ensure_python_demo_learning_content()
+        await ensure_demo_learning_content()
     except Exception:
         logger.exception("Database initialization failed")
         await close_database()

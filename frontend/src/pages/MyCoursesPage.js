@@ -19,6 +19,7 @@ const initialCourseForm = {
   public_info: "",
   accent_color: "#16a085",
   cover_image: "",
+  programming_language: "python",
 };
 
 function resolveAssetUrl(url) {
@@ -215,6 +216,18 @@ function MyCoursesPage() {
                     }
                   />
                 </FieldRow>
+                <Select
+                  value={form.programming_language}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      programming_language: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="python">Python</option>
+                  <option value="javascript">JavaScript</option>
+                </Select>
                 <Textarea
                   placeholder="Краткое описание курса"
                   value={form.description}
@@ -514,6 +527,14 @@ const Textarea = styled.textarea`
   padding: 14px;
   background: #fff;
   resize: vertical;
+`;
+
+const Select = styled.select`
+  width: 100%;
+  border: 1px solid #d6dae4;
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
 `;
 
 const CoverSection = styled.div`

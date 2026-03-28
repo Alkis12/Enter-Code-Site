@@ -25,6 +25,46 @@ function shiftDate(value, delta) {
   return date.toISOString().slice(0, 10);
 }
 
+function startOfCurrentWeek(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const weekday = date.getDay();
+  const delta = weekday === 0 ? -6 : 1 - weekday;
+  date.setDate(date.getDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function endOfCurrentWeek(value) {
+  return shiftDate(startOfCurrentWeek(value), 6);
+}
+
+function startOfCurrentMonth(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  date.setDate(1);
+  return date.toISOString().slice(0, 10);
+}
+
+function endOfCurrentMonth(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  date.setMonth(date.getMonth() + 1, 0);
+  return date.toISOString().slice(0, 10);
+}
+
+function applyDefaultRange(group, today = getTodayValue()) {
+  return {
+    from: group?.start_date || shiftDate(today, -45),
+    to: today,
+  };
+}
+
 function formatDateLabel(value) {
   if (!value) return "Без даты";
   const date = new Date(`${value}T00:00:00`);
@@ -83,7 +123,8 @@ function TeachingPage() {
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [rangeFrom, setRangeFrom] = useState(shiftDate(getTodayValue(), -45));
-  const [rangeTo, setRangeTo] = useState(shiftDate(getTodayValue(), 45));
+  const [rangeTo, setRangeTo] = useState(getTodayValue());
+  const [rangeMode, setRangeMode] = useState("default");
   const [sessions, setSessions] = useState([]);
   const [sessionEditor, setSessionEditor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -159,6 +200,16 @@ function TeachingPage() {
   }, [courseDetail, selectedGroup]);
 
   useEffect(() => {
+    if (!selectedGroup) {
+      return;
+    }
+    const nextRange = applyDefaultRange(selectedGroup);
+    setRangeMode("default");
+    setRangeFrom(nextRange.from);
+    setRangeTo(nextRange.to);
+  }, [selectedGroup]);
+
+  useEffect(() => {
     const loadSessions = async () => {
       if (!selectedGroupId) {
         setSessions([]);
@@ -195,6 +246,27 @@ function TeachingPage() {
 
   const pendingReviews = dashboard?.pending_reviews || [];
   const courseRequests = dashboard?.course_requests || [];
+
+  const applyWeekRange = () => {
+    const today = getTodayValue();
+    setRangeMode("week");
+    setRangeFrom(startOfCurrentWeek(today));
+    setRangeTo(endOfCurrentWeek(today));
+  };
+
+  const applyMonthRange = () => {
+    const today = getTodayValue();
+    setRangeMode("month");
+    setRangeFrom(startOfCurrentMonth(today));
+    setRangeTo(endOfCurrentMonth(today));
+  };
+
+  const applyRegularRange = () => {
+    const nextRange = applyDefaultRange(selectedGroup);
+    setRangeMode("default");
+    setRangeFrom(nextRange.from);
+    setRangeTo(nextRange.to);
+  };
 
   const handleSessionField = (field, value) => {
     setSessionEditor((prev) => ({
@@ -307,7 +379,7 @@ function TeachingPage() {
                 <EmptyState>У вас пока нет курсов для управления.</EmptyState>
               ) : (
                 <>
-                  <FilterRow>
+                  <SelectorRow>
                     <Field>
                       <Label>Курс</Label>
                       <Select
@@ -335,23 +407,58 @@ function TeachingPage() {
                         ))}
                       </Select>
                     </Field>
-                    <Field>
-                      <Label>С</Label>
-                      <Input
-                        type="date"
-                        value={rangeFrom}
-                        onChange={(event) => setRangeFrom(event.target.value)}
-                      />
-                    </Field>
-                    <Field>
-                      <Label>По</Label>
-                      <Input
-                        type="date"
-                        value={rangeTo}
-                        onChange={(event) => setRangeTo(event.target.value)}
-                      />
-                    </Field>
-                  </FilterRow>
+                  </SelectorRow>
+
+                  <QuickFilters>
+                    <QuickButton
+                      type="button"
+                      $active={rangeMode === "default"}
+                      onClick={applyRegularRange}
+                    >
+                      Обычный режим
+                    </QuickButton>
+                    <QuickButton
+                      type="button"
+                      $active={rangeMode === "week"}
+                      onClick={applyWeekRange}
+                    >
+                      Показать на этой неделе
+                    </QuickButton>
+                    <QuickButton
+                      type="button"
+                      $active={rangeMode === "month"}
+                      onClick={applyMonthRange}
+                    >
+                      В этом месяце
+                    </QuickButton>
+                  </QuickFilters>
+
+                  {rangeMode !== "week" && rangeMode !== "month" && (
+                    <CalendarRow>
+                      <Field>
+                        <Label>С</Label>
+                        <Input
+                          type="date"
+                          value={rangeFrom}
+                          onChange={(event) => {
+                            setRangeMode("custom");
+                            setRangeFrom(event.target.value);
+                          }}
+                        />
+                      </Field>
+                      <Field>
+                        <Label>По</Label>
+                        <Input
+                          type="date"
+                          value={rangeTo}
+                          onChange={(event) => {
+                            setRangeMode("custom");
+                            setRangeTo(event.target.value);
+                          }}
+                        />
+                      </Field>
+                    </CalendarRow>
+                  )}
 
                   {courseLoading || sessionsLoading ? (
                     <EmptyState>Загрузка занятий...</EmptyState>
@@ -363,6 +470,9 @@ function TeachingPage() {
                         <strong>{selectedGroup.name}</strong>
                         {selectedGroup.schedule_summary && (
                           <SectionHint>{selectedGroup.schedule_summary}</SectionHint>
+                        )}
+                        {selectedGroup.start_date && (
+                          <SectionHint>Старт группы: {formatDateLabel(selectedGroup.start_date)}</SectionHint>
                         )}
                         <SectionHint>Учеников в группе: {groupStudents.length}</SectionHint>
                       </GroupMetaCard>
@@ -735,6 +845,43 @@ const SectionHint = styled.p`
   color: var(--muted);
   line-height: 1.6;
   margin-top: 6px;
+`;
+
+const QuickFilters = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+`;
+
+const QuickButton = styled.button`
+  border: 1px solid ${(props) => (props.$active ? "#3d82c4" : "#d8dee8")};
+  border-radius: 999px;
+  padding: 11px 16px;
+  font: inherit;
+  font-weight: 700;
+  background: ${(props) => (props.$active ? "#eef5fb" : "#fff")};
+  color: ${(props) => (props.$active ? "#23598d" : "var(--text)")};
+  cursor: pointer;
+`;
+
+const SelectorRow = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+  }
+`;
+
+const CalendarRow = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+  }
 `;
 
 const FilterRow = styled.div`

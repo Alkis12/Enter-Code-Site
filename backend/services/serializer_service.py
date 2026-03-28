@@ -7,7 +7,8 @@ from models.course import Course
 from models.course_request import CourseRequest
 from models.group import Group
 from models.news_article import NewsArticle
-from models.task import Task, TaskStatus, TaskSubmission
+from models.programming_language import normalize_programming_language
+from models.task import Task, TaskStatus, TaskSubmission, TaskTestRunResult
 from models.topic import Topic
 from models.user import User, UserType
 from schemas.responses import (
@@ -135,6 +136,7 @@ async def serialize_group(group: Group, course: Optional[Course] = None) -> Grou
         teachers=group.teachers,
         schedule_slots=group.schedule_slots,
         schedule_summary=build_group_schedule_summary(group),
+        start_date=group.start_date,
         current_topic_id=group.current_topic_id,
         current_topic_name=current_topic_name,
         leaderboard=await build_group_leaderboard(course, group) if course else [],
@@ -175,6 +177,9 @@ async def serialize_course(course: Course, user: Optional[User] = None) -> Cours
         public_info=course.public_info,
         accent_color=course.accent_color,
         cover_image=course.cover_image,
+        programming_language=normalize_programming_language(
+            getattr(course, "programming_language", "python")
+        ).value,
         group_ids=course.group_ids,
         topic_ids=course.topic_ids,
         teacher_ids=teacher_ids,
@@ -204,6 +209,7 @@ async def serialize_topic(
 ) -> TopicResponse:
     total_tasks = await topic.get_total_tasks()
     total_points = await topic.get_total_points()
+    tasks = await Task.find(Task.topic_id == str(topic.id)).to_list()
     earned_points = 0
     progress_percent = 0.0
     if user:
@@ -224,12 +230,63 @@ async def serialize_topic(
         earned_points=earned_points,
         order=topic.order,
         is_open=topic.is_open,
+        has_manual_review_tasks=any(task.requires_manual_review for task in tasks),
         can_access=access_allowed,
         can_edit=can_edit,
     )
 
 
-def serialize_submission(submission: Optional[TaskSubmission]) -> Optional[TaskSubmissionResponse]:
+def serialize_test_run_result(
+    item: TaskTestRunResult,
+    include_hidden_details: bool,
+) -> TaskTestRunResultResponse:
+    is_public = getattr(item, "is_public", True)
+    if include_hidden_details or is_public:
+        return TaskTestRunResultResponse(
+            input_data=item.input_data,
+            expected_output=item.expected_output,
+            actual_output=item.actual_output,
+            stderr=item.stderr,
+            passed=item.passed,
+            is_public=is_public,
+        )
+
+    return TaskTestRunResultResponse(
+        input_data="",
+        expected_output="",
+        actual_output="",
+        stderr=item.stderr,
+        passed=item.passed,
+        is_public=False,
+    )
+
+
+def get_best_submission_from_history(result: object) -> Optional[TaskSubmission]:
+    best_submission = getattr(result, "best_submission", None)
+    if best_submission is not None:
+        return best_submission
+
+    history = list(getattr(result, "submission_history", []) or [])
+    if getattr(result, "last_submission", None) is not None:
+        history.append(result.last_submission)
+    if not history:
+        return None
+
+    def sort_key(item: TaskSubmission) -> tuple[int, int, int, datetime]:
+        return (
+            1 if item.passed else 0,
+            item.passed_tests,
+            item.total_tests,
+            item.created_at,
+        )
+
+    return max(history, key=sort_key)
+
+
+def serialize_submission(
+    submission: Optional[TaskSubmission],
+    include_hidden_details: bool = True,
+) -> Optional[TaskSubmissionResponse]:
     if not submission:
         return None
 
@@ -241,13 +298,7 @@ def serialize_submission(submission: Optional[TaskSubmission]) -> Optional[TaskS
         stdout=submission.stdout,
         stderr=submission.stderr,
         test_results=[
-            TaskTestRunResultResponse(
-                input_data=item.input_data,
-                expected_output=item.expected_output,
-                actual_output=item.actual_output,
-                stderr=item.stderr,
-                passed=item.passed,
-            )
+            serialize_test_run_result(item, include_hidden_details)
             for item in submission.test_results
         ],
         waiting_manual_review=submission.waiting_manual_review,
@@ -289,7 +340,7 @@ async def serialize_task(task: Task, user: Optional[User] = None, can_edit: bool
         if model_result:
             submission_history = []
             for item in reversed(model_result.submission_history):
-                serialized_submission = serialize_submission(item)
+                serialized_submission = serialize_submission(item, include_hidden_details=can_edit)
                 if serialized_submission is not None:
                     submission_history.append(serialized_submission)
             result = TaskResultResponse(
@@ -300,17 +351,34 @@ async def serialize_task(task: Task, user: Optional[User] = None, can_edit: bool
                 solved_at=model_result.solved_at,
                 reviewed_at=model_result.reviewed_at,
                 review_comment=model_result.review_comment,
-                last_submission=serialize_submission(model_result.last_submission),
+                last_submission=serialize_submission(
+                    model_result.last_submission,
+                    include_hidden_details=can_edit,
+                ),
+                best_submission=serialize_submission(
+                    get_best_submission_from_history(model_result),
+                    include_hidden_details=can_edit,
+                ),
                 submission_history=submission_history,
             )
 
     tests = None
+    public_examples = [
+        TaskTestCaseResponse(
+            input_data=test.input_data,
+            expected_output=test.expected_output,
+            is_public=True,
+        )
+        for test in task.tests
+        if getattr(test, "is_public", True)
+    ]
     pending_reviews: List[PendingTaskReviewResponse] = []
     if can_edit:
         tests = [
             TaskTestCaseResponse(
                 input_data=test.input_data,
                 expected_output=test.expected_output,
+                is_public=getattr(test, "is_public", True),
             )
             for test in task.tests
         ]
@@ -324,8 +392,9 @@ async def serialize_task(task: Task, user: Optional[User] = None, can_edit: bool
         attachments=task.attachments,
         points=task.points,
         starter_code=task.starter_code,
-        language=task.language,
+        language=normalize_programming_language(getattr(task, "language", "python")).value,
         requires_manual_review=task.requires_manual_review,
+        public_examples=public_examples,
         tests=tests,
         order=task.order,
         result=result,

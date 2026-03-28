@@ -3,6 +3,7 @@
   "description": "Тестовый курс по базовым темам Python. Внутри уже есть первые 3 урока с простыми конспектами и задачами по print, input и типам данных.",
   "accent_color": "#3776AB",
   "cover_image": "",
+  "programming_language": "python",
   "topics": [
     {
       "name": "1. print и вывод в консоль",

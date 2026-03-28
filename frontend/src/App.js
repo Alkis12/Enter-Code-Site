@@ -96,7 +96,7 @@ function App() {
         <Route
           path="/achievements/overview"
           element={
-            <RequireRoles roles={["admin"]}>
+            <RequireRoles roles={["teacher", "admin"]}>
               <AchievementsOverviewPage />
             </RequireRoles>
           }

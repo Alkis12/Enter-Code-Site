@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 
+import ContextBackButton from "../components/ContextBackButton";
 import ImageUploadControl from "../components/ImageUploadControl";
 import Header from "../components/Header/Header";
 import { isAuthenticated } from "../api/auth";
@@ -153,7 +154,7 @@ function ProfileEditPage() {
             <Eyebrow>Настройки профиля</Eyebrow>
             <Title>Редактировать профиль</Title>
           </div>
-          <BackLink to="/profile">Назад в профиль</BackLink>
+          <BackButton fallbackTo="/profile">Назад</BackButton>
         </TopBar>
 
         {loading || !form ? (
@@ -339,14 +340,15 @@ const Title = styled.h1`
   font-size: clamp(34px, 5vw, 50px);
 `;
 
-const BackLink = styled(Link)`
-  text-decoration: none;
+const BackButton = styled(ContextBackButton)`
   border: 1px solid #d7dbe4;
   border-radius: 12px;
   background: #fff;
   color: var(--text);
   padding: 14px 18px;
+  font: inherit;
   font-weight: 700;
+  cursor: pointer;
 `;
 
 const Grid = styled.section`

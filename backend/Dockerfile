@@ -7,7 +7,10 @@ WORKDIR /app
 
 COPY pyproject.toml poetry.lock ./
 
-RUN pip install --no-cache-dir poetry==2.1.3 \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir poetry==2.1.3 \
     && poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root
 

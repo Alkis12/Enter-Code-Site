@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import styled from "styled-components";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import logo from "../../assets/LoginAssets/logo.png";
@@ -8,6 +8,7 @@ import { getCurrentUserType, isAuthenticated } from "../../api/auth";
 
 function Header() {
   const { i18n } = useTranslation();
+  const location = useLocation();
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
   const canOpenLearning = authed && ["student", "teacher", "admin"].includes(userType);
@@ -17,6 +18,7 @@ function Header() {
   const showManagementPanel = canManageStudents || canManageAchievements || canManageTeaching;
   const currentLanguage = i18n.language?.startsWith("en") ? "en" : "ru";
   const [showMenu, setShowMenu] = useState(false);
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
 
   return (
     <Bar>
@@ -60,14 +62,12 @@ function Header() {
                   {canManageAchievements && (
                     <ManagementLink
                       to={userType === "admin" ? "/achievements/overview" : "/achievements/manage"}
+                      state={{ from: currentPath }}
                       onClick={() => setShowMenu(false)}
                     >
                       Достижения
                     </ManagementLink>
                   )}
-                  <ManagementLink to="/profile/edit" onClick={() => setShowMenu(false)}>
-                    Редактор аккаунтов
-                  </ManagementLink>
                 </ManagementPanel>
               )}
             </ManagementWrap>

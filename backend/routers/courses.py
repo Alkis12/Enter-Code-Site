@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from models.course import Course
 from models.course_request import CourseRequest
 from models.group import Group
+from models.task import Task
 from models.topic import Topic
 from models.user import User, UserType
 from schemas.requests import (
@@ -184,6 +185,7 @@ async def add_course(
         public_info=payload.public_info,
         accent_color=payload.accent_color,
         cover_image=payload.cover_image,
+        programming_language=payload.programming_language,
         schedule_weekdays=payload.schedule_weekdays,
         schedule_start_time=payload.schedule_start_time,
         schedule_end_time=payload.schedule_end_time,
@@ -233,6 +235,7 @@ async def update_course(
         "public_info",
         "accent_color",
         "cover_image",
+        "programming_language",
         "schedule_weekdays",
         "schedule_start_time",
         "schedule_end_time",
@@ -242,6 +245,16 @@ async def update_course(
             setattr(course, field, value)
     course.touch()
     await course.save()
+    if payload.programming_language is not None:
+        topics = await Topic.find(Topic.course_id == course_id).to_list()
+        for topic in topics:
+            tasks = await Task.find(Task.topic_id == str(topic.id)).to_list()
+            for task in tasks:
+                if getattr(task, "language", "python") == course.programming_language:
+                    continue
+                task.language = course.programming_language
+                task.touch()
+                await task.save()
     return MessageResponse(message="РљСѓСЂСЃ РѕР±РЅРѕРІР»РµРЅ", success=True)
 
 
@@ -282,6 +295,7 @@ async def create_course_group(
         teachers=list(set(course.teacher_ids + [str(user.id)])),
         students=payload.student_ids,
         schedule_slots=payload.schedule_slots,
+        start_date=payload.start_date,
         current_topic_id=payload.current_topic_id,
     )
     await group.insert()
@@ -315,10 +329,11 @@ async def update_course_group(
         group.name = payload.name
     if payload.schedule_slots is not None:
         group.schedule_slots = payload.schedule_slots
+    if "start_date" in payload.model_fields_set:
+        group.start_date = payload.start_date or None
     if payload.current_topic_id is not None:
         group.current_topic_id = payload.current_topic_id or None
     if payload.student_ids is not None:
-        group.touch()
         await group.save()
         course_groups = await get_groups_for_course(course)
         normalized_student_ids = list(dict.fromkeys(payload.student_ids))
@@ -331,11 +346,9 @@ async def update_course_group(
                     for student_id in course_group.students
                     if student_id not in normalized_student_ids
                 ]
-            course_group.touch()
             await course_group.save()
         group = await Group.get(group_id)
     group.teachers = list(set(group.teachers + course.teacher_ids + [str(user.id)]))
-    group.touch()
     await group.save()
     return await serialize_group(group, course)
 

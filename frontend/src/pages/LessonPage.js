@@ -17,17 +17,30 @@ import {
   updateTask,
 } from "../api/learning";
 
-const emptyTaskForm = {
-  title: "",
-  condition: "",
-  points: 10,
-  starter_code: "",
-  language: "python",
-  attachments: "",
-  requires_manual_review: false,
-  tests: [{ input_data: "", expected_output: "" }],
-  order: 0,
-};
+function normalizeTaskLanguage(language) {
+  const normalized = (language || "python").toLowerCase();
+  return normalized === "js" ? "javascript" : normalized;
+}
+
+function getTaskLanguageLabel(language) {
+  return normalizeTaskLanguage(language) === "javascript"
+    ? "JavaScript"
+    : "Python";
+}
+
+function createEmptyTaskForm(language = "python") {
+  return {
+    title: "",
+    condition: "",
+    points: 10,
+    starter_code: "",
+    language: normalizeTaskLanguage(language),
+    attachments: "",
+    requires_manual_review: false,
+    tests: [{ input_data: "", expected_output: "", is_public: true }],
+    order: 0,
+  };
+}
 
 const statusMetaMap = {
   no_attempts: {
@@ -85,14 +98,14 @@ function createTaskEditor(task) {
     condition: task.condition || "",
     points: task.points || 0,
     starter_code: task.starter_code || "",
-    language: task.language || "python",
+    language: normalizeTaskLanguage(task.language || "python"),
     attachments: (task.attachments || []).join("\n"),
     requires_manual_review: Boolean(task.requires_manual_review),
     order: task.order || 0,
     tests:
       task.tests && task.tests.length > 0
-        ? task.tests.map((item) => ({ ...item }))
-        : [{ input_data: "", expected_output: "" }],
+        ? task.tests.map((item) => ({ is_public: true, ...item }))
+        : [{ input_data: "", expected_output: "", is_public: true }],
   };
 }
 
@@ -161,6 +174,85 @@ function getRunResultTone(runResult) {
   return runResult.success ? "success" : "warning";
 }
 
+function getFriendlyErrorMessage(stderr, passed) {
+  if (passed) {
+    return "";
+  }
+  const normalized = (stderr || "").toLowerCase();
+  if (!normalized) {
+    return "Ответ не прошел проверку.";
+  }
+  if (normalized.includes("time limit exceeded")) {
+    return "Превышен лимит времени.";
+  }
+  if (normalized.includes("syntaxerror") || normalized.includes("invalid syntax")) {
+    return "Синтаксическая ошибка.";
+  }
+  if (
+    normalized.includes("referenceerror") ||
+    normalized.includes("nameerror") ||
+    normalized.includes("typeerror") ||
+    normalized.includes("valueerror") ||
+    normalized.includes("traceback")
+  ) {
+    return "Ошибка выполнения.";
+  }
+  return "Раннер завершился с ошибкой.";
+}
+
+function isOutputTruncated(value) {
+  return (value || "").includes("[output truncated]");
+}
+
+function getSubmissionProgressLabel(submission) {
+  if (!submission) {
+    return "Попыток пока нет.";
+  }
+  const testResults = submission.test_results || [];
+  if (submission.passed) {
+    return `Пройдено ${submission.passed_tests}/${submission.total_tests} тестов.`;
+  }
+  const firstFailedIndex = testResults.findIndex((item) => !item.passed);
+  if (firstFailedIndex === -1) {
+    return `Пройдено ${submission.passed_tests}/${submission.total_tests} тестов.`;
+  }
+  const failedTest = testResults[firstFailedIndex];
+  const failedLabel = failedTest?.is_public
+    ? `тест ${firstFailedIndex + 1}`
+    : "скрытый тест";
+  return `Пройдено ${submission.passed_tests}/${submission.total_tests} тестов, первый сбой: ${failedLabel}.`;
+}
+
+function PublicExamples({ examples }) {
+  if (!examples || examples.length === 0) {
+    return null;
+  }
+
+  return (
+    <Stack>
+      <strong>Публичные примеры</strong>
+      {examples.map((example, index) => (
+        <SubCard key={`example-${index}`}>
+          <Row>
+            <strong>Пример {index + 1}</strong>
+            <Badge $tone="info">Виден студенту</Badge>
+          </Row>
+          <MiniGrid>
+            <CodeBlock>
+              <span>Входные данные</span>
+              <code>{example.input_data || "пусто"}</code>
+            </CodeBlock>
+            <CodeBlock>
+              <span>Ожидаемый вывод</span>
+              <code>{example.expected_output || "пусто"}</code>
+            </CodeBlock>
+          </MiniGrid>
+        </SubCard>
+      ))}
+    </Stack>
+  );
+}
+
 function TestReport({ testResults }) {
   if (!testResults || testResults.length === 0) {
     return <MutedText>Тестовый отчет пока пуст.</MutedText>;
@@ -172,22 +264,25 @@ function TestReport({ testResults }) {
         <SubCard key={`${test.input_data}-${index}`}>
           <Row>
             <strong>Тест {index + 1}</strong>
-            <Badge $tone={test.passed ? "success" : "warning"}>
-              {test.passed ? "OK" : "Ошибка"}
-            </Badge>
+            <Row>
+              {!test.is_public && <Badge $tone="neutral">Скрытый</Badge>}
+              <Badge $tone={test.passed ? "success" : "warning"}>
+                {test.passed ? "OK" : "Ошибка"}
+              </Badge>
+            </Row>
           </Row>
           <MiniGrid>
             <CodeBlock>
               <span>Входные данные</span>
-              <code>{test.input_data || "пусто"}</code>
+              <code>{test.is_public ? test.input_data || "пусто" : "скрыто"}</code>
             </CodeBlock>
             <CodeBlock>
               <span>Ожидаемый вывод</span>
-              <code>{test.expected_output || "пусто"}</code>
+              <code>{test.is_public ? test.expected_output || "пусто" : "скрыто"}</code>
             </CodeBlock>
             <CodeBlock>
               <span>Фактический вывод</span>
-              <code>{test.actual_output || "пусто"}</code>
+              <code>{test.is_public ? test.actual_output || "пусто" : "скрыто"}</code>
             </CodeBlock>
             <CodeBlock>
               <span>stderr</span>
@@ -202,6 +297,7 @@ function TestReport({ testResults }) {
 
 function TaskEditorFields({
   form,
+  courseLanguage,
   onFieldChange,
   onTestChange,
   onAddTest,
@@ -238,10 +334,13 @@ function TaskEditorFields({
         </Field>
         <Field>
           <Label>Язык</Label>
-          <Input
-            value={form.language}
-            onChange={(event) => onFieldChange("language", event.target.value)}
-          />
+          <ReadonlyFieldValue>
+            {getTaskLanguageLabel(courseLanguage || form.language)}
+          </ReadonlyFieldValue>
+          <FieldHint>
+            Язык берется из курса и не переключается на уровне отдельной
+            задачи.
+          </FieldHint>
         </Field>
         <Field>
           <Label>Порядок задачи</Label>
@@ -305,6 +404,19 @@ function TaskEditorFields({
               }
             />
           </Field>
+          <Field>
+            <Label>Видимость</Label>
+            <ToggleLabel>
+              <input
+                type="checkbox"
+                checked={Boolean(test.is_public)}
+                onChange={(event) =>
+                  onTestChange(index, "is_public", event.target.checked)
+                }
+              />
+              <span>Публичный пример</span>
+            </ToggleLabel>
+          </Field>
           <GhostButton type="button" onClick={() => onRemoveTest(index)}>
             Удалить тест
           </GhostButton>
@@ -327,7 +439,7 @@ function LessonPage() {
   const [notice, setNotice] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [lessonForm, setLessonForm] = useState(null);
-  const [newTask, setNewTask] = useState(emptyTaskForm);
+  const [newTask, setNewTask] = useState(() => createEmptyTaskForm());
   const [taskEditors, setTaskEditors] = useState({});
   const [studentCodes, setStudentCodes] = useState({});
   const [taskRunInputs, setTaskRunInputs] = useState({});
@@ -375,6 +487,9 @@ function LessonPage() {
           content: response.lesson.content || "",
           resources: (response.lesson.resources || []).join("\n"),
         });
+        setNewTask(
+          createEmptyTaskForm(response.course?.programming_language || "python")
+        );
         setTaskEditors(nextEditors);
         setStudentCodes(nextCodes);
         setTaskRunInputs(nextRunInputs);
@@ -485,7 +600,7 @@ function LessonPage() {
     if (!taskId) {
       setNewTask((prev) => ({
         ...prev,
-        tests: [...prev.tests, { input_data: "", expected_output: "" }],
+        tests: [...prev.tests, { input_data: "", expected_output: "", is_public: true }],
       }));
       return;
     }
@@ -493,7 +608,10 @@ function LessonPage() {
       ...prev,
       [taskId]: {
         ...prev[taskId],
-        tests: [...prev[taskId].tests, { input_data: "", expected_output: "" }],
+        tests: [
+          ...prev[taskId].tests,
+          { input_data: "", expected_output: "", is_public: true },
+        ],
       },
     }));
   };
@@ -505,7 +623,7 @@ function LessonPage() {
         tests:
           prev.tests.length > 1
             ? prev.tests.filter((_, itemIndex) => itemIndex !== index)
-            : [{ input_data: "", expected_output: "" }],
+            : [{ input_data: "", expected_output: "", is_public: true }],
       }));
       return;
     }
@@ -516,7 +634,7 @@ function LessonPage() {
         tests:
           prev[taskId].tests.length > 1
             ? prev[taskId].tests.filter((_, itemIndex) => itemIndex !== index)
-            : [{ input_data: "", expected_output: "" }],
+            : [{ input_data: "", expected_output: "", is_public: true }],
       },
     }));
   };
@@ -560,6 +678,9 @@ function LessonPage() {
 
   const { course, lesson, tasks } = data;
   const canEdit = lesson.can_edit;
+  const courseLanguage = normalizeTaskLanguage(
+    course.programming_language || "python"
+  );
   const courseLessons = data.course_lessons || [];
   const currentLessonIndex = Math.max(
     0,
@@ -592,6 +713,7 @@ function LessonPage() {
       await createTask({
         ...newTask,
         topic_id: lessonId,
+        language: courseLanguage,
         points: Number(newTask.points || 0),
         order: Number(newTask.order || 0),
         attachments: newTask.attachments
@@ -603,7 +725,7 @@ function LessonPage() {
             item.input_data.trim() !== "" || item.expected_output.trim() !== ""
         ),
       });
-      setNewTask(emptyTaskForm);
+      setNewTask(createEmptyTaskForm(courseLanguage));
       setNotice("Задача создана.");
       await loadLesson({ showLoader: false });
       setShowCreateTask(false);
@@ -615,6 +737,7 @@ function LessonPage() {
       const editor = taskEditors[taskId];
       await updateTask(taskId, {
         ...editor,
+        language: courseLanguage,
         points: Number(editor.points || 0),
         order: Number(editor.order || 0),
         attachments: editor.attachments
@@ -895,6 +1018,7 @@ function LessonPage() {
             <SectionTitle>Добавить задачу</SectionTitle>
             <TaskEditorFields
               form={newTask}
+              courseLanguage={courseLanguage}
               onFieldChange={updateNewTaskField}
               onTestChange={updateNewTaskTestField}
               onAddTest={() => addTaskTest(null)}
@@ -911,12 +1035,21 @@ function LessonPage() {
             const result = task.result;
             const statusMeta = getStatusMeta(result?.status || "no_attempts");
             const lastSubmission = result?.last_submission;
+            const bestSubmission = result?.best_submission;
             const submissionHistory = result?.submission_history || [];
             const pendingReviews = task.pending_reviews || [];
             const isSolved = result?.status === "correct";
             const isExpanded = Boolean(expandedTasks[task.id]);
             const isEditingTask = editingTaskId === task.id;
             const runResult = taskRunResults[task.id];
+            const runFriendlyError = getFriendlyErrorMessage(
+              runResult?.stderr,
+              runResult?.success
+            );
+            const submissionFriendlyError = getFriendlyErrorMessage(
+              lastSubmission?.stderr,
+              lastSubmission?.passed
+            );
             const attemptsToShow =
               submissionHistory.length > 0
                 ? submissionHistory
@@ -943,7 +1076,7 @@ function LessonPage() {
                   <div>
                     <HeroSubtitle>{task.title}</HeroSubtitle>
                     <TaskInfo>
-                      {task.points} баллов · {task.language}
+                      {task.points} баллов · {getTaskLanguageLabel(task.language)}
                     </TaskInfo>
                   </div>
                   <Row>
@@ -967,6 +1100,7 @@ function LessonPage() {
                         ))}
                       </AttachmentList>
                     )}
+                    {!canEdit && <PublicExamples examples={task.public_examples || []} />}
                     {canEdit ? (
                       <>
                         <ButtonRow>
@@ -988,6 +1122,7 @@ function LessonPage() {
                             <SectionTitle>Редактор задачи</SectionTitle>
                             <TaskEditorFields
                               form={taskEditors[task.id]}
+                              courseLanguage={courseLanguage}
                               onFieldChange={(field, value) =>
                                 updateTaskEditorField(task.id, field, value)
                               }
@@ -1107,6 +1242,14 @@ function LessonPage() {
                                 {result?.score || 0} / {task.points}
                               </strong>
                             </ResultFact>
+                            <ResultFact>
+                              <span>Лучший прогон</span>
+                              <strong>
+                                {bestSubmission
+                                  ? `${bestSubmission.passed_tests}/${bestSubmission.total_tests}`
+                                  : "Еще нет"}
+                              </strong>
+                            </ResultFact>
                             {task.requires_manual_review && (
                               <ResultFact>
                                 <span>Проверка</span>
@@ -1128,6 +1271,12 @@ function LessonPage() {
                               </strong>
                             </ResultFact>
                           </ResultFacts>
+                          {lastSubmission && (
+                            <SubCard>{getSubmissionProgressLabel(lastSubmission)}</SubCard>
+                          )}
+                          {submissionFriendlyError && (
+                            <SubCard>{submissionFriendlyError}</SubCard>
+                          )}
                           {result?.review_comment && (
                             <SubCard>{result.review_comment}</SubCard>
                           )}
@@ -1138,10 +1287,14 @@ function LessonPage() {
                             value={studentCodes[task.id] || ""}
                             onChange={(value) => updateStudentCode(task.id, value)}
                             language={task.language || "python"}
-                            placeholder="Напишите решение на Python"
+                            placeholder={`Напишите решение на ${getTaskLanguageLabel(
+                              task.language
+                            )}`}
                           />
                           <MutedText>
                             Черновик сохраняется локально в браузере автоматически.
+                            Автотесты и локальный запуск останавливаются через 2
+                            секунды на каждый тест.
                           </MutedText>
                         </Field>
                         <SubCard>
@@ -1162,7 +1315,7 @@ function LessonPage() {
                                     [task.id]: event.target.value,
                                   }))
                                 }
-                                placeholder="Введите данные так, как программа получит их через input()"
+                                placeholder="Введите данные так, как программа получит их через stdin"
                               />
                             </Field>
                             <ButtonRow>
@@ -1201,25 +1354,34 @@ function LessonPage() {
                                       ? "Тайм-аут"
                                       : "Ошибка запуска"}
                                   </Badge>
-                                  <MutedText>
-                                    Код возврата: {runResult.exit_code}
-                                  </MutedText>
-                                </Row>
-                                <MiniGrid>
-                                  <CodeBlock>
-                                    <span>Входные данные</span>
+                                <MutedText>
+                                  Код возврата: {runResult.exit_code}
+                                </MutedText>
+                              </Row>
+                              {!runResult.success && runFriendlyError && (
+                                <MutedText>{runFriendlyError}</MutedText>
+                              )}
+                              <MiniGrid>
+                                <CodeBlock>
+                                  <span>Входные данные</span>
                                     <code>{runResult.input_data || "пусто"}</code>
                                   </CodeBlock>
-                                  <CodeBlock>
-                                    <span>stdout</span>
-                                    <code>{runResult.stdout || "пусто"}</code>
-                                  </CodeBlock>
-                                  <CodeBlock>
-                                    <span>stderr</span>
-                                    <code>{runResult.stderr || "пусто"}</code>
-                                  </CodeBlock>
-                                </MiniGrid>
-                              </ResultSummaryCard>
+                                <CodeBlock>
+                                  <span>stdout</span>
+                                  <code>{runResult.stdout || "пусто"}</code>
+                                  {isOutputTruncated(runResult.stdout) && (
+                                    <SmallMutedText>Вывод был обрезан по лимиту.</SmallMutedText>
+                                  )}
+                                </CodeBlock>
+                                <CodeBlock>
+                                  <span>stderr</span>
+                                  <code>{runResult.stderr || "пусто"}</code>
+                                  {isOutputTruncated(runResult.stderr) && (
+                                    <SmallMutedText>Вывод был обрезан по лимиту.</SmallMutedText>
+                                  )}
+                                </CodeBlock>
+                              </MiniGrid>
+                            </ResultSummaryCard>
                             )}
                           </Stack>
                         </SubCard>
@@ -1316,10 +1478,16 @@ function LessonPage() {
               <CodeBlock>
                 <span>stdout</span>
                 <code>{historyDrawer.submission.stdout || "пусто"}</code>
+                {isOutputTruncated(historyDrawer.submission.stdout) && (
+                  <SmallMutedText>Вывод был обрезан по лимиту.</SmallMutedText>
+                )}
               </CodeBlock>
               <CodeBlock>
                 <span>stderr</span>
                 <code>{historyDrawer.submission.stderr || "пусто"}</code>
+                {isOutputTruncated(historyDrawer.submission.stderr) && (
+                  <SmallMutedText>Вывод был обрезан по лимиту.</SmallMutedText>
+                )}
               </CodeBlock>
               <TestReport
                 testResults={historyDrawer.submission.test_results || []}
@@ -1613,6 +1781,21 @@ const Input = styled.input`
   background: #fff;
 `;
 
+const ReadonlyFieldValue = styled.div`
+  width: 100%;
+  border: 1px solid #d7dbe4;
+  border-radius: 12px;
+  padding: 13px 14px;
+  background: #f7f9fc;
+  font-weight: 700;
+`;
+
+const FieldHint = styled.div`
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+`;
+
 const Textarea = styled.textarea`
   width: 100%;
   border: 1px solid #d7dbe4;
@@ -1791,7 +1974,7 @@ const AttemptMeta = styled.div`
 
 const TestEditorRow = styled.div`
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) 160px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 160px;
   gap: 10px;
 
   @media (max-width: 980px) {
@@ -1898,4 +2081,11 @@ const IconButton = styled.button`
 const MutedText = styled.p`
   color: var(--muted);
   line-height: 1.6;
+`;
+
+const SmallMutedText = styled.div`
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 6px;
 `;

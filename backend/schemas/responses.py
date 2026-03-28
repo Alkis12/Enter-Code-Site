@@ -80,6 +80,7 @@ class CourseResponse(BaseModel):
     public_info: str = ""
     accent_color: str = "#16a085"
     cover_image: str = ""
+    programming_language: str = "python"
     group_ids: List[str] = Field(default_factory=list)
     topic_ids: List[str] = Field(default_factory=list)
     teacher_ids: List[str] = Field(default_factory=list)
@@ -108,6 +109,7 @@ class GroupResponse(BaseModel):
     teachers: List[str] = Field(default_factory=list)
     schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
     schedule_summary: str = ""
+    start_date: Optional[str] = None
     current_topic_id: Optional[str] = None
     current_topic_name: Optional[str] = None
     leaderboard: List[LeaderboardEntryResponse] = Field(default_factory=list)
@@ -145,6 +147,7 @@ class TopicResponse(BaseModel):
     earned_points: int = 0
     order: int = 0
     is_open: bool = False
+    has_manual_review_tasks: bool = False
     can_access: bool = False
     can_edit: bool = False
 
@@ -152,6 +155,7 @@ class TopicResponse(BaseModel):
 class TaskTestCaseResponse(BaseModel):
     input_data: str = ""
     expected_output: str = ""
+    is_public: bool = True
 
 
 class TaskTestRunResultResponse(BaseModel):
@@ -160,6 +164,7 @@ class TaskTestRunResultResponse(BaseModel):
     actual_output: str = ""
     stderr: str = ""
     passed: bool = False
+    is_public: bool = True
 
 
 class TaskSubmissionResponse(BaseModel):
@@ -193,6 +198,7 @@ class TaskResultResponse(BaseModel):
     reviewed_at: Optional[datetime] = None
     review_comment: Optional[str] = None
     last_submission: Optional[TaskSubmissionResponse] = None
+    best_submission: Optional[TaskSubmissionResponse] = None
     submission_history: List[TaskSubmissionResponse] = Field(default_factory=list)
 
 
@@ -232,6 +238,7 @@ class TaskResponse(BaseModel):
     starter_code: str = ""
     language: str = "python"
     requires_manual_review: bool = False
+    public_examples: List[TaskTestCaseResponse] = Field(default_factory=list)
     tests: Optional[List[TaskTestCaseResponse]] = None
     order: int = 0
     result: Optional[TaskResultResponse] = None

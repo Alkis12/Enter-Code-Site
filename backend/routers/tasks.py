@@ -5,6 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from models.achievement import AchievementTrigger
 from models.course import Course
+from models.programming_language import (
+    ProgrammingLanguage,
+    get_programming_language_label,
+    normalize_programming_language,
+)
 from models.task import Task, TaskStatus, TaskSubmission, TaskTestCase
 from models.topic import Topic
 from models.user import User, UserType
@@ -18,7 +23,12 @@ from schemas.requests import (
 from schemas.responses import MessageResponse, TaskCodeRunResponse, TaskResponse
 from services.achievement_service import unlock_achievements_for_trigger
 from services.auth_service import get_current_user_dependency, require_role
-from services.code_runner_service import run_python_program, run_python_solution
+from services.code_runner_service import (
+    run_javascript_program,
+    run_javascript_solution,
+    run_python_program,
+    run_python_solution,
+)
 from services.learning_service import (
     can_edit_course,
     get_courses_for_user,
@@ -26,9 +36,10 @@ from services.learning_service import (
     get_student_group_for_course,
 )
 from services.serializer_service import serialize_achievement_notice, serialize_task
+from services.task_execution_service import run_code_with_queue, submit_code_with_queue
 
 
-router = APIRouter(prefix="/task", tags=["Р—Р°РґР°С‡Рё"])
+router = APIRouter(prefix="/task", tags=["Задачи"])
 
 
 def lesson_is_available(topic: Topic, ordered_topics: list[Topic]) -> bool:
@@ -37,6 +48,42 @@ def lesson_is_available(topic: Topic, ordered_topics: list[Topic]) -> bool:
     if not ordered_topics:
         return True
     return str(ordered_topics[0].id) == str(topic.id)
+
+
+def get_course_language(course: Course) -> str:
+    return normalize_programming_language(getattr(course, "programming_language", "python")).value
+
+
+def ensure_task_language_matches_course(requested_language: str | None, course: Course) -> str:
+    course_language = get_course_language(course)
+    if requested_language is None:
+        return course_language
+
+    normalized_requested = normalize_programming_language(requested_language).value
+    if normalized_requested != course_language:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Этот курс закреплен за языком "
+                f"{get_programming_language_label(course_language)}. "
+                "Язык отдельной задачи менять нельзя."
+            ),
+        )
+    return course_language
+
+
+def run_solution_for_language(language: str, code: str, tests: list[TaskTestCase]):
+    normalized_language = normalize_programming_language(language)
+    if normalized_language == ProgrammingLanguage.JAVASCRIPT:
+        return run_javascript_solution(code, tests)
+    return run_python_solution(code, tests)
+
+
+def run_program_for_language(language: str, code: str, input_data: str):
+    normalized_language = normalize_programming_language(language)
+    if normalized_language == ProgrammingLanguage.JAVASCRIPT:
+        return run_javascript_program(code, input_data=input_data)
+    return run_python_program(code, input_data=input_data)
 
 
 async def ensure_topic_access(user: User, topic: Topic, editable: bool) -> None:
@@ -48,16 +95,16 @@ async def ensure_topic_access(user: User, topic: Topic, editable: bool) -> None:
     student_group = await get_student_group_for_course(str(user.id), str(course.id)) if course else None
     visible_order = get_group_visible_topic_order(student_group, course_topics)
     if topic.order > visible_order:
-        raise HTTPException(status_code=403, detail="Р Р€РЎР‚Р С•Р С” Р С—Р С•Р С”Р В° Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљ")
+        raise HTTPException(status_code=403, detail="Тема пока заблокирована")
 
 
 async def get_task_course(task: Task) -> Course:
     topic = await Topic.get(task.topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="РЈСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Урок не найден")
     course = await Course.get(topic.course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Курс не найден")
     return course
 
 
@@ -68,12 +115,12 @@ async def add_task(
 ):
     topic = await Topic.get(payload.topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="РЈСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Урок не найден")
     course = await Course.get(topic.course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Курс не найден")
     if not await can_edit_course(user, course):
-        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ СѓСЂРѕРєР°")
+        raise HTTPException(status_code=403, detail="Нет прав на изменение урока")
 
     task = Task(
         topic_id=payload.topic_id,
@@ -82,7 +129,7 @@ async def add_task(
         attachments=payload.attachments,
         points=payload.points,
         starter_code=payload.starter_code,
-        language=payload.language,
+        language=ensure_task_language_matches_course(payload.language, course),
         requires_manual_review=payload.requires_manual_review,
         tests=[TaskTestCase(**item.model_dump()) for item in payload.tests],
         order=payload.order,
@@ -91,7 +138,7 @@ async def add_task(
     topic.task_ids.append(str(task.id))
     topic.touch()
     await topic.save()
-    return MessageResponse(message=f"Р—Р°РґР°С‡Р° '{task.title}' СЃРѕР·РґР°РЅР°", success=True)
+    return MessageResponse(message=f"Задача '{task.title}' создана", success=True)
 
 
 @router.put("/{task_id}", response_model=MessageResponse)
@@ -102,10 +149,10 @@ async def update_task(
 ):
     task = await Task.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     course = await get_task_course(task)
     if not await can_edit_course(user, course):
-        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° РёР·РјРµРЅРµРЅРёРµ Р·Р°РґР°С‡Рё")
+        raise HTTPException(status_code=403, detail="Нет прав на изменение задачи")
 
     for field in [
         "title",
@@ -113,18 +160,18 @@ async def update_task(
         "attachments",
         "points",
         "starter_code",
-        "language",
         "requires_manual_review",
         "order",
     ]:
         value = getattr(payload, field)
         if value is not None:
             setattr(task, field, value)
+    task.language = ensure_task_language_matches_course(payload.language, course)
     if payload.tests is not None:
         task.tests = [TaskTestCase(**item.model_dump()) for item in payload.tests]
     task.touch()
     await task.save()
-    return MessageResponse(message="Р—Р°РґР°С‡Р° РѕР±РЅРѕРІР»РµРЅР°", success=True)
+    return MessageResponse(message="Задача обновлена", success=True)
 
 
 @router.delete("/{task_id}", response_model=MessageResponse)
@@ -134,21 +181,21 @@ async def delete_task(
 ):
     task = await Task.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     topic = await Topic.get(task.topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="РЈСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Урок не найден")
     course = await Course.get(topic.course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Курс не найден")
     if not await can_edit_course(user, course):
-        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° СѓРґР°Р»РµРЅРёРµ Р·Р°РґР°С‡Рё")
+        raise HTTPException(status_code=403, detail="Нет прав на удаление задачи")
 
     topic.task_ids = [item for item in topic.task_ids if item != str(task.id)]
     topic.touch()
     await topic.save()
     await task.delete()
-    return MessageResponse(message="Р—Р°РґР°С‡Р° СѓРґР°Р»РµРЅР°", success=True)
+    return MessageResponse(message="Задача удалена", success=True)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -158,11 +205,11 @@ async def task_detail(
 ):
     task = await Task.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     course = await get_task_course(task)
     user_courses = {str(item.id) for item in await get_courses_for_user(user)}
     if user.user_type != UserType.ADMIN and str(course.id) not in user_courses:
-        raise HTTPException(status_code=403, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°РґР°С‡Рµ")
+        raise HTTPException(status_code=403, detail="Нет доступа к задаче")
     editable = await can_edit_course(user, course)
     topic = await Topic.get(task.topic_id)
     if topic:
@@ -177,27 +224,32 @@ async def submit_task_solution(
     user: User = Depends(require_role(UserType.STUDENT)),
 ):
     if user.user_type != UserType.STUDENT:
-        raise HTTPException(status_code=400, detail="Р РµС€РµРЅРёСЏ РјРѕРіСѓС‚ РѕС‚РїСЂР°РІР»СЏС‚СЊ С‚РѕР»СЊРєРѕ СѓС‡Р°С‰РёРµСЃСЏ")
+        raise HTTPException(status_code=400, detail="Решения могут отправлять только ученики")
 
     task = await Task.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     course = await get_task_course(task)
     user_courses = {str(item.id) for item in await get_courses_for_user(user)}
     if str(course.id) not in user_courses:
-        raise HTTPException(status_code=403, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°РґР°С‡Рµ")
+        raise HTTPException(status_code=403, detail="Нет доступа к задаче")
 
     topic = await Topic.get(task.topic_id)
     if topic:
         await ensure_topic_access(user, topic, editable=False)
 
-    if task.language != "python":
-        raise HTTPException(status_code=400, detail="РЎРµР№С‡Р°СЃ Р°РІС‚РѕРїСЂРѕРІРµСЂРєР° РїРѕРґРґРµСЂР¶РёРІР°РµС‚ С‚РѕР»СЊРєРѕ Python")
-
     result = task.upsert_result(str(user.id))
     already_solved = result.status == TaskStatus.CORRECT
 
-    passed, passed_tests, stdout, stderr, test_results = run_python_solution(payload.code, task.tests)
+    passed, passed_tests, stdout, stderr, test_results = await submit_code_with_queue(
+        str(user.id),
+        str(task.id),
+        lambda: run_solution_for_language(
+            task.language,
+            payload.code,
+            task.tests,
+        ),
+    )
     waiting_manual_review = passed and task.requires_manual_review and not already_solved
 
     result.attempts += 1
@@ -270,15 +322,14 @@ async def run_task_code(
     if topic:
         await ensure_topic_access(user, topic, editable)
 
-    if task.language != "python":
-        raise HTTPException(
-            status_code=400,
-            detail="Сейчас локальный запуск поддерживает только Python",
-        )
-
-    success, exit_code, stdout, stderr, timed_out = run_python_program(
-        payload.code,
-        input_data=payload.input_data,
+    success, exit_code, stdout, stderr, timed_out = await run_code_with_queue(
+        str(user.id),
+        str(task.id),
+        lambda: run_program_for_language(
+            task.language,
+            payload.code,
+            payload.input_data,
+        ),
     )
     return TaskCodeRunResponse(
         input_data=payload.input_data,
@@ -299,20 +350,20 @@ async def review_task_submission(
 ):
     task = await Task.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     course = await get_task_course(task)
     if not await can_edit_course(user, course):
-        raise HTTPException(status_code=403, detail="РќРµС‚ РїСЂР°РІ РЅР° СЂСѓС‡РЅСѓСЋ РїСЂРѕРІРµСЂРєСѓ")
+        raise HTTPException(status_code=403, detail="Нет прав на ручную проверку")
 
     student = await User.get(student_id)
     if not student or student.user_type != UserType.STUDENT:
-        raise HTTPException(status_code=404, detail="РЈС‡Р°С‰РёР№СЃСЏ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Ученик не найден")
 
     result = task.get_result_for_student(student_id)
     if not result or not result.last_submission:
-        raise HTTPException(status_code=404, detail="РЈ СЌС‚РѕРіРѕ СѓС‡Р°С‰РµРіРѕСЃСЏ РЅРµС‚ РѕС‚РїСЂР°РІРєРё РїРѕ Р·Р°РґР°С‡Рµ")
+        raise HTTPException(status_code=404, detail="У ученика нет отправки по задаче")
     if result.status != TaskStatus.PENDING_REVIEW:
-        raise HTTPException(status_code=400, detail="Р—Р°РґР°С‡Р° РЅРµ РѕР¶РёРґР°РµС‚ СЂСѓС‡РЅСѓСЋ РїСЂРѕРІРµСЂРєСѓ")
+        raise HTTPException(status_code=400, detail="Задача не ожидает ручной проверки")
 
     result.review_comment = payload.comment
     result.reviewed_at = datetime.utcnow()
@@ -352,13 +403,13 @@ async def tasks_for_topic(
 ):
     topic = await Topic.get(topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="РЈСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Урок не найден")
     course = await Course.get(topic.course_id)
     if not course:
-        raise HTTPException(status_code=404, detail="РљСѓСЂСЃ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=404, detail="Курс не найден")
     user_courses = {str(item.id) for item in await get_courses_for_user(user)}
     if user.user_type != UserType.ADMIN and str(course.id) not in user_courses:
-        raise HTTPException(status_code=403, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°РґР°С‡Р°Рј СѓСЂРѕРєР°")
+        raise HTTPException(status_code=403, detail="Нет доступа к задачам урока")
     editable = await can_edit_course(user, course)
     await ensure_topic_access(user, topic, editable)
     tasks = await Task.find(Task.topic_id == topic_id).to_list()

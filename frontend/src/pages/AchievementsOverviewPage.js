@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 
+import ContextBackButton from "../components/ContextBackButton";
 import Header from "../components/Header/Header";
 import { getCurrentUserType, isAuthenticated } from "../api/auth";
 import { listAchievementsOverview } from "../api/achievements";
@@ -21,9 +22,11 @@ function getTypeLabel(item) {
 }
 
 function AchievementsOverviewPage() {
+  const location = useLocation();
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
-  const isAdmin = userType === "admin";
+  const canViewOverview = userType === "admin" || userType === "teacher";
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,16 +48,16 @@ function AchievementsOverviewPage() {
       }
     };
 
-    if (authed && isAdmin) {
+    if (authed && canViewOverview) {
       load();
     }
-  }, [authed, isAdmin]);
+  }, [authed, canViewOverview]);
 
   if (!authed) {
     return <Navigate to="/login" replace />;
   }
 
-  if (!isAdmin) {
+  if (!canViewOverview) {
     return <Navigate to="/profile" replace />;
   }
 
@@ -74,7 +77,12 @@ function AchievementsOverviewPage() {
             </HeroText>
           </div>
           <HeroActions>
-            <SecondaryLink to="/achievements/manage">Редактировать достижения</SecondaryLink>
+            <ActionGroup>
+              <SecondaryLink to="/achievements/manage" state={{ from: currentPath }}>
+                Редактировать достижения
+              </SecondaryLink>
+              <BackButton fallbackTo="/profile">Назад</BackButton>
+            </ActionGroup>
           </HeroActions>
         </HeroCard>
 
@@ -200,6 +208,13 @@ const HeroActions = styled.div`
   align-items: flex-start;
 `;
 
+const ActionGroup = styled.div`
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+`;
+
 const SecondaryLink = styled(Link)`
   text-decoration: none;
   border-radius: 16px;
@@ -207,6 +222,17 @@ const SecondaryLink = styled(Link)`
   font-weight: 800;
   background: #eef5fb;
   color: #23598d;
+`;
+
+const BackButton = styled(ContextBackButton)`
+  border: 1px solid #d7dbe4;
+  border-radius: 16px;
+  padding: 13px 18px;
+  font: inherit;
+  font-weight: 800;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
 `;
 
 const Cards = styled.div`

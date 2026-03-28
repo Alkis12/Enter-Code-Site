@@ -15,6 +15,7 @@ class Course(Document):
     student_ids: List[str] = Field(default_factory=list)
     accent_color: str = Field(default="#16a085", max_length=20)
     cover_image: str = Field(default="")
+    programming_language: str = Field(default="python", max_length=20)
     schedule_weekdays: List[int] = Field(default_factory=list)
     schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")

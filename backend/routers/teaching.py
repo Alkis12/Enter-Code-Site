@@ -13,7 +13,7 @@ from schemas.requests import (
     SaveAttendanceSessionRequest,
     UpdateStudentCoursePaymentModeRequest,
 )
-from schemas.responses import AttendanceSessionResponse, MessageResponse
+from schemas.responses import AttendanceEntryResponse, AttendanceSessionResponse, MessageResponse
 from services.auth_service import get_current_user_dependency
 from services.billing_service import (
     apply_prepayment,
@@ -90,6 +90,16 @@ def serialize_attendance_session(
             updated_at=datetime.utcnow(),
         )
 
+    entries = [
+        AttendanceEntryResponse(
+            student_id=entry.student_id,
+            present=entry.present,
+            paid=entry.paid,
+            note=entry.note,
+        )
+        for entry in (session.entries or [])
+    ]
+
     return AttendanceSessionResponse(
         course_id=session.course_id,
         group_id=session.group_id,
@@ -98,7 +108,7 @@ def serialize_attendance_session(
         start_time=session.start_time,
         end_time=session.end_time,
         is_cancelled=session.is_cancelled,
-        entries=session.entries,
+        entries=entries,
         comment=session.comment,
         updated_at=session.updated_at,
     )
