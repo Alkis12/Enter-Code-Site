@@ -76,6 +76,7 @@ def course_response(course_id="course-1", name="Python Basics"):
         "public_info": "",
         "accent_color": "#16a085",
         "cover_image": "",
+        "programming_language": "python",
         "group_ids": [],
         "topic_ids": [],
         "teacher_ids": [],
@@ -112,6 +113,7 @@ def topic_response(topic_id="topic-1", course_id="course-1", name="Intro"):
         "earned_points": 0,
         "order": 0,
         "is_open": True,
+        "has_manual_review_tasks": False,
         "can_access": True,
         "can_edit": False,
     }
@@ -162,8 +164,23 @@ def task_response(
             }
             if status != "no_attempts"
             else None,
+            "best_submission": {
+                "code": "print(42)",
+                "passed": status == "correct",
+                "passed_tests": attempts if attempts else 0,
+                "total_tests": 1,
+                "stdout": stdout,
+                "stderr": stderr,
+                "test_results": [],
+                "waiting_manual_review": False,
+                "review_comment": None,
+                "created_at": "2026-03-19T00:00:00Z",
+            }
+            if status != "no_attempts"
+            else None,
             "submission_history": [],
         },
+        "public_examples": [],
     }
 
 

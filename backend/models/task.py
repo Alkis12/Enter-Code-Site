@@ -16,6 +16,7 @@ class TaskStatus(str, Enum):
 class TaskTestCase(BaseModel):
     input_data: str = Field(default="")
     expected_output: str = Field(default="")
+    is_public: bool = Field(default=True)
 
 
 class TaskTestRunResult(BaseModel):
@@ -24,6 +25,7 @@ class TaskTestRunResult(BaseModel):
     actual_output: str = Field(default="")
     stderr: str = Field(default="")
     passed: bool = Field(default=False)
+    is_public: bool = Field(default=True)
 
 
 class TaskSubmission(BaseModel):
@@ -48,11 +50,29 @@ class TaskResult(BaseModel):
     reviewed_at: Optional[datetime] = None
     review_comment: Optional[str] = None
     last_submission: Optional[TaskSubmission] = None
+    best_submission: Optional[TaskSubmission] = None
     submission_history: List[TaskSubmission] = Field(default_factory=list)
 
     def add_submission(self, submission: TaskSubmission) -> None:
         self.last_submission = submission
         self.submission_history.append(submission)
+        if self._is_better_submission(submission, self.best_submission):
+            self.best_submission = submission
+
+    @staticmethod
+    def _is_better_submission(
+        candidate: TaskSubmission,
+        current: Optional[TaskSubmission],
+    ) -> bool:
+        if current is None:
+            return True
+        if candidate.passed != current.passed:
+            return candidate.passed
+        if candidate.passed_tests != current.passed_tests:
+            return candidate.passed_tests > current.passed_tests
+        if candidate.total_tests != current.total_tests:
+            return candidate.total_tests > current.total_tests
+        return candidate.created_at >= current.created_at
 
 
 class Task(Document):

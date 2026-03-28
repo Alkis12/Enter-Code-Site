@@ -43,6 +43,15 @@ def format_date(value: date) -> str:
     return value.isoformat()
 
 
+def try_parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return parse_date(value)
+    except ValueError:
+        return None
+
+
 def parse_month(value: str) -> tuple[int, int]:
     year, month = value.split("-")
     return int(year), int(month)
@@ -66,6 +75,19 @@ def month_range(start_month: str, end_month: str) -> List[str]:
     return result
 
 
+def get_group_start_date(group: Group) -> date | None:
+    return try_parse_date(getattr(group, "start_date", None))
+
+
+async def get_group_start_date_for_id(group_id: str | None) -> date | None:
+    if not group_id:
+        return None
+    group = await Group.get(group_id)
+    if not group:
+        return None
+    return get_group_start_date(group)
+
+
 async def get_or_create_enrollment(
     student_id: str,
     course_id: str,
@@ -77,17 +99,31 @@ async def get_or_create_enrollment(
         StudentCourseEnrollment.student_id == student_id,
         StudentCourseEnrollment.course_id == course_id,
     )
+    group_start = await get_group_start_date_for_id(group_id)
     if enrollment:
         updated = False
         if group_id != enrollment.group_id:
             enrollment.group_id = group_id
             updated = True
+        if group_start:
+            current_start = try_parse_date(enrollment.enrolled_on)
+            if current_start is None or current_start > group_start:
+                enrollment.enrolled_on = format_date(group_start)
+                updated = True
+        elif enrolled_on:
+            current_start = try_parse_date(enrollment.enrolled_on)
+            requested_start = try_parse_date(enrolled_on)
+            if requested_start and (current_start is None or requested_start < current_start):
+                enrollment.enrolled_on = format_date(requested_start)
+                updated = True
         if updated:
             enrollment.touch()
             await enrollment.save()
         return enrollment
 
-    if not enrolled_on:
+    if group_start:
+        enrolled_on = format_date(group_start)
+    elif not enrolled_on:
         student = await User.get(student_id)
         enrolled_on = format_date((student.created_at if student else datetime.utcnow()).date())
 
@@ -144,12 +180,14 @@ def iter_group_occurrences(
     date_to: date,
 ) -> List[tuple[str, GroupScheduleSlot]]:
     occurrences: List[tuple[str, GroupScheduleSlot]] = []
-    if date_from > date_to:
+    group_start = get_group_start_date(group)
+    effective_start = max(date_from, group_start) if group_start else date_from
+    if effective_start > date_to:
         return occurrences
 
     for slot in group.schedule_slots:
-        days_ahead = (slot.weekday - date_from.weekday()) % 7
-        current = date_from + timedelta(days=days_ahead)
+        days_ahead = (slot.weekday - effective_start.weekday()) % 7
+        current = effective_start + timedelta(days=days_ahead)
         while current <= date_to:
             occurrences.append((format_date(current), slot))
             current += timedelta(days=7)
@@ -167,11 +205,26 @@ async def list_group_sessions(
 ) -> List[AttendanceSession]:
     today = utc_today()
     enrollments = await get_group_enrollments(str(course.id), str(group.id), group.students)
-    enrollment_dates = [parse_date(item.enrolled_on) for item in enrollments.values()]
+    enrollment_dates = [
+        parsed_date
+        for item in enrollments.values()
+        for parsed_date in [try_parse_date(item.enrolled_on)]
+        if parsed_date is not None
+    ]
     range_start = parse_date(date_from) if date_from else (min(enrollment_dates) if enrollment_dates else today)
     range_end = parse_date(date_to) if date_to else today + timedelta(days=45)
+    group_start = get_group_start_date(group)
+    if group_start:
+        range_start = max(range_start, group_start)
+    if range_start > range_end:
+        return []
 
     persisted = await AttendanceSession.find(AttendanceSession.group_id == str(group.id)).to_list()
+    persisted = [
+        session for session in persisted
+        for session_date in [try_parse_date(session.date)]
+        if session_date is not None and range_start <= session_date <= range_end
+    ]
     persisted_map = {session.date: session for session in persisted if not session.is_cancelled}
     occupied_original_dates = {
         session.original_date or session.date
@@ -185,7 +238,9 @@ async def list_group_sessions(
 
         entries: List[AttendanceEntry] = []
         for student_id, enrollment in enrollments.items():
-            if parse_date(enrollment.enrolled_on) > parse_date(occurrence_date):
+            enrolled_on = try_parse_date(enrollment.enrolled_on)
+            occurrence_day = try_parse_date(occurrence_date)
+            if enrolled_on and occurrence_day and enrolled_on > occurrence_day:
                 continue
             entries.append(
                 AttendanceEntry(

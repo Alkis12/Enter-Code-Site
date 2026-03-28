@@ -1,10 +1,12 @@
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from pydantic import field_validator
 
 from models.achievement import AchievementTrigger
 from models.event import EventTag, ScheduleType
 from models.group import GroupScheduleSlot
+from models.programming_language import ProgrammingLanguage, normalize_programming_language
 from models.student_course_enrollment import PaymentMode
 from models.user import UserType
 
@@ -57,11 +59,17 @@ class CreateCourseRequest(BaseModel):
     public_info: str = Field(default="", max_length=12000)
     accent_color: str = Field(default="#16a085", max_length=20)
     cover_image: str = Field(default="")
+    programming_language: str = Field(default=ProgrammingLanguage.PYTHON.value, max_length=20)
     schedule_weekdays: List[int] = Field(default_factory=list)
     schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     student_ids: List[str] = Field(default_factory=list)
     teacher_ids: List[str] = Field(default_factory=list)
+
+    @field_validator("programming_language")
+    @classmethod
+    def normalize_programming_language_field(cls, value: str) -> str:
+        return normalize_programming_language(value).value
 
 
 class UpdateCourseRequest(BaseModel):
@@ -70,9 +78,17 @@ class UpdateCourseRequest(BaseModel):
     public_info: Optional[str] = Field(default=None, max_length=12000)
     accent_color: Optional[str] = Field(default=None, max_length=20)
     cover_image: Optional[str] = Field(default=None)
+    programming_language: Optional[str] = Field(default=None, max_length=20)
     schedule_weekdays: Optional[List[int]] = None
     schedule_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     schedule_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+
+    @field_validator("programming_language")
+    @classmethod
+    def normalize_optional_programming_language_field(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return normalize_programming_language(value).value
 
 
 class SetCourseMembersRequest(BaseModel):
@@ -120,6 +136,7 @@ class UpdateTopicRequest(BaseModel):
 class TaskTestCaseRequest(BaseModel):
     input_data: str = Field(default="")
     expected_output: str = Field(default="")
+    is_public: bool = Field(default=True)
 
 
 class CreateTaskRequest(BaseModel):
@@ -129,10 +146,15 @@ class CreateTaskRequest(BaseModel):
     attachments: List[str] = Field(default_factory=list)
     points: int = Field(default=10, ge=0)
     starter_code: str = Field(default="")
-    language: str = Field(default="python", max_length=20)
+    language: str = Field(default=ProgrammingLanguage.PYTHON.value, max_length=20)
     requires_manual_review: bool = Field(default=False)
     tests: List[TaskTestCaseRequest] = Field(default_factory=list)
     order: int = Field(default=0, ge=0)
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language_field(cls, value: str) -> str:
+        return normalize_programming_language(value).value
 
 
 class UpdateTaskRequest(BaseModel):
@@ -145,6 +167,13 @@ class UpdateTaskRequest(BaseModel):
     requires_manual_review: Optional[bool] = None
     tests: Optional[List[TaskTestCaseRequest]] = None
     order: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("language")
+    @classmethod
+    def normalize_optional_language_field(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return normalize_programming_language(value).value
 
 
 class SubmitTaskSolutionRequest(BaseModel):
@@ -234,6 +263,7 @@ class CreateCourseGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     student_ids: List[str] = Field(default_factory=list)
     schedule_slots: List[GroupScheduleSlot] = Field(default_factory=list)
+    start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     current_topic_id: Optional[str] = None
 
 
@@ -241,6 +271,7 @@ class UpdateCourseGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     student_ids: Optional[List[str]] = None
     schedule_slots: Optional[List[GroupScheduleSlot]] = None
+    start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     current_topic_id: Optional[str] = None
 
 

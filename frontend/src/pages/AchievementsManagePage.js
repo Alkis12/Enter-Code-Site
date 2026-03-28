@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 
-import ImageUploadControl from "../components/ImageUploadControl";
 import Header from "../components/Header/Header";
+import ContextBackButton from "../components/ContextBackButton";
+import ImageUploadControl from "../components/ImageUploadControl";
 import { getCurrentUserType, isAuthenticated } from "../api/auth";
 import {
-  listEditableAchievements,
+  listAchievementsOverview,
   updateAchievement,
   uploadAchievementAvatar,
 } from "../api/achievements";
@@ -19,13 +20,28 @@ function resolveAssetUrl(url) {
   return `${API_URL}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
+function formatDateTime(value) {
+  if (!value) return "Без даты";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function getTypeLabel(item) {
+  return item.achievement_type === "course" ? "Курс" : "Общее";
+}
+
 function AchievementsManagePage() {
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
   const canManageAchievements = userType === "teacher" || userType === "admin";
 
-  const [achievements, setAchievements] = useState([]);
+  const [items, setItems] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -38,8 +54,8 @@ function AchievementsManagePage() {
   const [error, setError] = useState("");
 
   const selectedAchievement = useMemo(
-    () => achievements.find((item) => item.id === selectedId) || null,
-    [achievements, selectedId]
+    () => items.find((item) => item.id === selectedId) || null,
+    [items, selectedId]
   );
 
   const loadAchievements = useCallback(async ({ showLoader = true } = {}) => {
@@ -48,24 +64,14 @@ function AchievementsManagePage() {
         setLoading(true);
       }
 
-      const response = await listEditableAchievements();
-      setAchievements(response || []);
-
-      let nextSelectedId = "";
+      const response = await listAchievementsOverview();
+      const nextItems = response || [];
+      setItems(nextItems);
       setSelectedId((prev) => {
-        nextSelectedId =
-          prev && response.some((item) => item.id === prev)
-            ? prev
-            : response[0]?.id || "";
-        return nextSelectedId;
-      });
-
-      const selected =
-        response.find((item) => item.id === nextSelectedId) || response[0] || null;
-      setForm({
-        title: selected?.title || "",
-        description: selected?.description || "",
-        avatar_url: selected?.avatar_url || "",
+        if (prev && nextItems.some((item) => item.id === prev)) {
+          return prev;
+        }
+        return nextItems[0]?.id || "";
       });
       setError("");
     } catch (err) {
@@ -101,6 +107,19 @@ function AchievementsManagePage() {
   if (!canManageAchievements) {
     return <Navigate to="/profile" replace />;
   }
+
+  const openEditor = (item) => {
+    setSelectedId(item.id);
+    setModalOpen(true);
+    setMessage("");
+    setError("");
+  };
+
+  const closeEditor = () => {
+    setModalOpen(false);
+    setMessage("");
+    setError("");
+  };
 
   const handleSave = async (event) => {
     event.preventDefault();
@@ -160,124 +179,176 @@ function AchievementsManagePage() {
 
         <HeroCard>
           <HeroCopy>
-            <Eyebrow>Редактор достижений</Eyebrow>
-            <HeroTitle>Отдельный раздел для ачивок</HeroTitle>
+            <Eyebrow>Достижения</Eyebrow>
+            <HeroTitle>Компактный редактор ачивок</HeroTitle>
             <HeroText>
-              Выберите достижение из списка, поменяйте его название и описание,
-              а затем загрузите новую аватарку. Профиль больше не перегружен
-              этими настройками.
+              Все доступные достижения собраны в короткие карточки. Нажмите на
+              карточку, чтобы сразу открыть редактирование и полную статистику
+              по ученикам.
             </HeroText>
           </HeroCopy>
 
           <HeroActions>
-            <SecondaryLink to="/profile">Назад в профиль</SecondaryLink>
+            <BackButton fallbackTo="/profile">Назад</BackButton>
           </HeroActions>
         </HeroCard>
 
-        <SectionCard as="form" onSubmit={handleSave}>
-          <SectionHeader>
-            <div>
-              <SectionTitle>Настройка достижения</SectionTitle>
-              <SectionText>
-                Доступны только общие достижения и достижения по вашим курсам.
-              </SectionText>
-            </div>
-          </SectionHeader>
-
-          {loading ? (
-            <EmptyState>Загрузка достижений...</EmptyState>
-          ) : achievements.length === 0 ? (
-            <EmptyState>Нет достижений, доступных для редактирования.</EmptyState>
-          ) : (
-            <>
-              <Label>
-                Достижение
-                <Select
-                  value={selectedId}
-                  onChange={(event) => setSelectedId(event.target.value)}
-                >
-                  {achievements.map((achievement) => (
-                    <option key={achievement.id} value={achievement.id}>
-                      {achievement.title}
-                    </option>
-                  ))}
-                </Select>
-              </Label>
-
-              <EditorGrid>
-                <PreviewCard>
-                  <PreviewAvatar>
-                    {form.avatar_url ? (
-                      <img
-                        src={resolveAssetUrl(form.avatar_url)}
-                        alt={form.title || "Achievement"}
-                      />
+        {loading ? (
+          <InfoCard>Загрузка достижений...</InfoCard>
+        ) : items.length === 0 ? (
+          <EmptyState>Нет достижений, доступных для редактирования.</EmptyState>
+        ) : (
+          <CardsGrid>
+            {items.map((item) => (
+              <MiniCard key={item.id} type="button" onClick={() => openEditor(item)}>
+                <MiniTop>
+                  <MiniAvatar>
+                    {item.avatar_url ? (
+                      <img src={resolveAssetUrl(item.avatar_url)} alt={item.title} />
                     ) : (
-                      <span>{(form.title || "A").slice(0, 1).toUpperCase()}</span>
+                      <span>{item.title.slice(0, 1).toUpperCase()}</span>
                     )}
-                  </PreviewAvatar>
-                  <PreviewBody>
-                    <strong>{form.title || "Без названия"}</strong>
-                    <p>{form.description || "Описание пока не заполнено."}</p>
-                  </PreviewBody>
-                </PreviewCard>
+                  </MiniAvatar>
+                  <MiniStats>
+                    <strong>{item.recipient_percent}%</strong>
+                    <span>
+                      {item.recipient_count}/{item.total_students}
+                    </span>
+                  </MiniStats>
+                </MiniTop>
+                <MiniType>{getTypeLabel(item)}</MiniType>
+                <MiniTitle>{item.title}</MiniTitle>
+                <MiniMeta>{item.course_name || "Все курсы"}</MiniMeta>
+              </MiniCard>
+            ))}
+          </CardsGrid>
+        )}
+      </Content>
 
-                <FieldsColumn>
-                  <Label>
-                    Название
-                    <Input
-                      value={form.title}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, title: event.target.value }))
-                      }
-                      required
+      {modalOpen && selectedAchievement && (
+        <Overlay onClick={closeEditor}>
+          <ModalCard onClick={(event) => event.stopPropagation()}>
+            <ModalHeader>
+              <div>
+                <ModalTitle>{selectedAchievement.title}</ModalTitle>
+                <ModalText>
+                  {getTypeLabel(selectedAchievement)} ·{" "}
+                  {selectedAchievement.course_name || "Все курсы"}
+                </ModalText>
+              </div>
+              <IconButton type="button" onClick={closeEditor}>
+                ×
+              </IconButton>
+            </ModalHeader>
+
+            <StatsGrid>
+              <StatBox>
+                <span>Условие</span>
+                <strong>{selectedAchievement.condition_text}</strong>
+              </StatBox>
+              <StatBox>
+                <span>Получили</span>
+                <strong>
+                  {selectedAchievement.recipient_count}/{selectedAchievement.total_students}
+                </strong>
+              </StatBox>
+              <StatBox>
+                <span>Процент</span>
+                <strong>{selectedAchievement.recipient_percent}%</strong>
+              </StatBox>
+            </StatsGrid>
+
+            <EditorGrid as="form" onSubmit={handleSave}>
+              <PreviewCard>
+                <PreviewAvatar>
+                  {form.avatar_url ? (
+                    <img
+                      src={resolveAssetUrl(form.avatar_url)}
+                      alt={form.title || selectedAchievement.title}
                     />
-                  </Label>
+                  ) : (
+                    <span>{(form.title || "A").slice(0, 1).toUpperCase()}</span>
+                  )}
+                </PreviewAvatar>
+                <PreviewBody>
+                  <strong>{form.title || "Без названия"}</strong>
+                  <p>{form.description || "Описание пока не заполнено."}</p>
+                </PreviewBody>
+                <ImageUploadControl
+                  inputId={`achievement-avatar-${selectedAchievement.id}`}
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  hasValue={Boolean(form.avatar_url)}
+                  uploading={uploading}
+                  onChange={handleAvatarUpload}
+                  onRemove={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      avatar_url: "",
+                    }))
+                  }
+                />
+              </PreviewCard>
 
-                  <Label>
-                    Описание
-                    <Textarea
-                      rows={5}
-                      value={form.description}
-                      onChange={(event) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                  </Label>
+              <FieldsColumn>
+                <Label>
+                  Название
+                  <Input
+                    value={form.title}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, title: event.target.value }))
+                    }
+                    required
+                  />
+                </Label>
 
-                  <Label>
-                    Аватарка
-                    <UploadRow>
-                      <ImageUploadControl
-                        inputId="achievement-avatar-upload"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        hasValue={Boolean(form.avatar_url)}
-                        uploading={uploading}
-                        onChange={handleAvatarUpload}
-                        onRemove={() =>
-                          setForm((prev) => ({
-                            ...prev,
-                            avatar_url: "",
-                          }))
-                        }
-                      />
-                    </UploadRow>
-                  </Label>
-                </FieldsColumn>
-              </EditorGrid>
+                <Label>
+                  Описание
+                  <Textarea
+                    rows={5}
+                    value={form.description}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        description: event.target.value,
+                      }))
+                    }
+                  />
+                </Label>
+
+                <RecipientsBlock>
+                  <RecipientsTitle>Статистика по ученикам</RecipientsTitle>
+                  {selectedAchievement.recipients.length === 0 ? (
+                    <EmptyState>Пока никто не получил это достижение.</EmptyState>
+                  ) : (
+                    <RecipientsList>
+                      {selectedAchievement.recipients.map((recipient) => (
+                        <RecipientRow key={`${selectedAchievement.id}-${recipient.user_id}`}>
+                          <div>
+                            <strong>
+                              {recipient.name} {recipient.surname}
+                            </strong>
+                            <span>@{recipient.tg_username}</span>
+                          </div>
+                          <small>{formatDateTime(recipient.unlocked_at)}</small>
+                        </RecipientRow>
+                      ))}
+                    </RecipientsList>
+                  )}
+                </RecipientsBlock>
+              </FieldsColumn>
 
               <ActionRow>
+                <SecondaryButton type="button" onClick={closeEditor}>
+                  Закрыть
+                </SecondaryButton>
                 <PrimaryButton type="submit" disabled={saving}>
-                  {saving ? "Сохраняю..." : "Сохранить достижение"}
+                  {saving ? "Сохраняю..." : "Сохранить"}
                 </PrimaryButton>
               </ActionRow>
-            </>
-          )}
-        </SectionCard>
-      </Content>
+            </EditorGrid>
+          </ModalCard>
+        </Overlay>
+      )}
     </Page>
   );
 }
@@ -341,51 +412,176 @@ const HeroActions = styled.div`
   align-items: flex-start;
 `;
 
-const SectionCard = styled.section`
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 24px;
+const BackButton = styled(ContextBackButton)`
+  border: 1px solid #d7dbe4;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  padding: 14px 18px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+`;
+
+const CardsGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+`;
+
+const MiniCard = styled.button`
+  border: 1px solid #e3ebef;
+  border-radius: 20px;
+  background: #fff;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   box-shadow: var(--shadow);
+`;
+
+const MiniTop = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+`;
+
+const MiniAvatar = styled.div`
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #18ab8b 0%, #2ad0b0 100%);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+`;
+
+const MiniStats = styled.div`
+  text-align: right;
+
+  strong {
+    display: block;
+    font-size: 22px;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 13px;
+  }
+`;
+
+const MiniType = styled.div`
+  color: #23598d;
+  font-weight: 800;
+  font-size: 13px;
+  text-transform: uppercase;
+`;
+
+const MiniTitle = styled.h2`
+  font-size: 22px;
+  line-height: 1.2;
+`;
+
+const MiniMeta = styled.div`
+  color: var(--muted);
+`;
+
+const Overlay = styled.div`
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 25, 37, 0.46);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
+  z-index: 60;
+`;
+
+const ModalCard = styled.section`
+  width: min(1080px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 28px;
+  border: 1px solid #e8ebf2;
+  box-shadow: 0 28px 80px rgba(19, 24, 34, 0.2);
+  padding: 28px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 `;
 
-const SectionHeader = styled.div`
+const ModalHeader = styled.div`
   display: flex;
   justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
 `;
 
-const SectionTitle = styled.h2`
-  font-size: 30px;
+const ModalTitle = styled.h2`
+  font-size: clamp(28px, 4vw, 40px);
 `;
 
-const SectionText = styled.p`
+const ModalText = styled.p`
   color: var(--muted);
-  line-height: 1.6;
+  margin-top: 8px;
 `;
 
-const Label = styled.label`
+const IconButton = styled.button`
+  width: 44px;
+  height: 44px;
+  border: 1px solid #d7dbe4;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+`;
+
+const StatsGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+
+  @media (max-width: 760px) {
+    grid-template-columns: 1fr;
+  }
+`;
+
+const StatBox = styled.div`
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-weight: 700;
+
+  span {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  strong {
+    line-height: 1.5;
+  }
 `;
 
-const Select = styled.select`
-  width: 100%;
-  border: 1px solid #d7dbe4;
-  border-radius: 12px;
-  padding: 13px 14px;
-  background: #fff;
-`;
-
-const EditorGrid = styled.div`
+const EditorGrid = styled.form`
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: 24px;
 
   @media (max-width: 900px) {
@@ -441,6 +637,13 @@ const FieldsColumn = styled.div`
   gap: 16px;
 `;
 
+const Label = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 700;
+`;
+
 const Input = styled.input`
   width: 100%;
   border: 1px solid #d7dbe4;
@@ -458,17 +661,45 @@ const Textarea = styled.textarea`
   resize: vertical;
 `;
 
-const UploadRow = styled.div`
+const RecipientsBlock = styled.div`
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const RecipientsTitle = styled.h3`
+  font-size: 22px;
+`;
+
+const RecipientsList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+`;
+
+const RecipientRow = styled.div`
+  display: flex;
+  justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  align-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+
+  span,
+  small {
+    color: var(--muted);
+  }
 `;
 
 const ActionRow = styled.div`
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  grid-column: 1 / -1;
 `;
 
 const PrimaryButton = styled.button`
@@ -486,14 +717,14 @@ const PrimaryButton = styled.button`
   }
 `;
 
-const SecondaryLink = styled(Link)`
+const SecondaryButton = styled.button`
   border: 1px solid #d7dbe4;
   border-radius: 12px;
   background: #fff;
   color: var(--text);
   padding: 14px 18px;
   font-weight: 700;
-  text-decoration: none;
+  cursor: pointer;
 `;
 
 const EmptyState = styled.div`

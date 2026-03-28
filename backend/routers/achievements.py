@@ -64,8 +64,12 @@ async def editable_achievements(user: User = Depends(require_role(UserType.TEACH
 
 
 @router.get("/overview", response_model=List[AchievementOverviewResponse])
-async def achievements_overview(user: User = Depends(require_role(UserType.ADMIN))):
-    achievements = await Achievement.find_all().sort("title").to_list()
+async def achievements_overview(user: User = Depends(require_role(UserType.TEACHER))):
+    all_achievements = await Achievement.find_all().sort("title").to_list()
+    achievements: List[Achievement] = []
+    for achievement in all_achievements:
+        if await can_manage_achievement(user, achievement):
+            achievements.append(achievement)
     students = await User.find(User.user_type == UserType.STUDENT).to_list()
     courses = await Course.find_all().to_list()
     course_map = {str(course.id): course for course in courses}

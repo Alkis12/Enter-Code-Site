@@ -1,0 +1,91 @@
+{
+  "name": "JavaScript Start",
+  "description": "Тестовый курс по базовым темам JavaScript: вывод, ввод через stdin и простая арифметика.",
+  "accent_color": "#F7DF1E",
+  "cover_image": "",
+  "programming_language": "javascript",
+  "topics": [
+    {
+      "name": "1. console.log и базовый вывод",
+      "description": "Как вывести текст и результат выражения в консоль.",
+      "order": 1,
+      "resources": [
+        "https://developer.mozilla.org/en-US/docs/Web/API/console/log_static"
+      ],
+      "content": "В JavaScript для вывода в консоль обычно используют console.log().\n\nПримеры:\nconsole.log(\"Привет!\")\nconsole.log(40 + 2)\n\nВ задачах этого курса ответ должен попадать в stdout через console.log().",
+      "tasks": [
+        {
+          "title": "Привет, JavaScript!",
+          "condition": "Напишите программу, которая выводит ровно одну строку:\n\nПривет, JavaScript!",
+          "points": 10,
+          "order": 1,
+          "starter_code": "// Напишите решение ниже\n",
+          "tests": [
+            {
+              "input_data": "",
+              "expected_output": "Привет, JavaScript!"
+            }
+          ]
+        },
+        {
+          "title": "Три строки",
+          "condition": "Напишите программу, которая выводит три строки:\n\nЯ изучаю\nJavaScript\nс Enter Code",
+          "points": 15,
+          "order": 2,
+          "starter_code": "// Используйте несколько вызовов console.log()\n",
+          "tests": [
+            {
+              "input_data": "",
+              "expected_output": "Я изучаю\nJavaScript\nс Enter Code"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. stdin и числа",
+      "description": "Как читать ввод из stdin в Node.js и работать с числами.",
+      "order": 2,
+      "resources": [
+        "https://nodejs.org/api/process.html#processstdin"
+      ],
+      "content": "В задачах этого курса входные данные приходят через stdin.\n\nОбычно удобно читать их так:\nconst fs = require(\"fs\");\nconst input = fs.readFileSync(0, \"utf8\").trim();\n\nЕсли строк несколько:\nconst lines = fs.readFileSync(0, \"utf8\").trim().split(/\\r?\\n/);",
+      "tasks": [
+        {
+          "title": "Следующее число",
+          "condition": "Дано одно целое число. Выведите число, которое идет сразу после него.",
+          "points": 15,
+          "order": 1,
+          "starter_code": "const fs = require(\"fs\");\nconst input = fs.readFileSync(0, \"utf8\").trim();\n\n",
+          "tests": [
+            {
+              "input_data": "5",
+              "expected_output": "6"
+            },
+            {
+              "input_data": "41",
+              "expected_output": "42"
+            }
+          ]
+        },
+        {
+          "title": "Сумма двух чисел",
+          "condition": "Программа получает два целых числа, каждое в новой строке. Выведите их сумму.",
+          "points": 20,
+          "order": 2,
+          "starter_code": "const fs = require(\"fs\");\nconst lines = fs.readFileSync(0, \"utf8\").trim().split(/\\r?\\n/);\n\n",
+          "tests": [
+            {
+              "input_data": "3\n4",
+              "expected_output": "7"
+            },
+            {
+              "input_data": "10\n2",
+              "expected_output": "12"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

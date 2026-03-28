@@ -44,6 +44,63 @@ class TasksApiTest(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["stdout"], "42")
 
+    def test_run_endpoint_supports_javascript(self):
+        user = SimpleNamespace(id="student-1", user_type=UserType.STUDENT)
+        client, self.app = make_client(
+            tasks_router,
+            overrides={get_current_user_dependency: lambda: user},
+        )
+        task = FakeTask(language="javascript", requires_manual_review=False)
+        course = SimpleNamespace(id="course-1")
+        topic = SimpleNamespace(id="topic-1", course_id="course-1", order=0, is_open=True)
+
+        with (
+            patch("routers.tasks.Task.get", new=AsyncMock(return_value=task)),
+            patch("routers.tasks.get_task_course", new=AsyncMock(return_value=course)),
+            patch("routers.tasks.get_courses_for_user", new=AsyncMock(return_value=[course])),
+            patch("routers.tasks.can_edit_course", new=AsyncMock(return_value=False)),
+            patch("routers.tasks.Topic.get", new=AsyncMock(return_value=topic)),
+            patch("routers.tasks.ensure_topic_access", new=AsyncMock(return_value=None)),
+            patch("routers.tasks.run_javascript_program", return_value=(True, 0, "42", "", False)),
+        ):
+            response = client.post(
+                "/task/task-1/run",
+                json={"code": "console.log(42)", "input_data": ""},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["stdout"], "42")
+
+    def test_add_task_rejects_language_switch_inside_course(self):
+        teacher = SimpleNamespace(id="teacher-1", user_type=UserType.TEACHER)
+        client, self.app = make_client(
+            tasks_router,
+            overrides={get_current_user_dependency: lambda: teacher},
+        )
+        topic = SimpleNamespace(id="topic-1", course_id="course-1")
+        course = SimpleNamespace(id="course-1", programming_language="python")
+
+        with (
+            patch("routers.tasks.Topic.get", new=AsyncMock(return_value=topic)),
+            patch("routers.tasks.Course.get", new=AsyncMock(return_value=course)),
+            patch("routers.tasks.can_edit_course", new=AsyncMock(return_value=True)),
+        ):
+            response = client.post(
+                "/task/add",
+                json={
+                    "topic_id": "topic-1",
+                    "title": "JS task inside Python course",
+                    "condition": "Print 42",
+                    "language": "javascript",
+                    "tests": [{"input_data": "", "expected_output": "42"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("языком Python", response.json()["detail"])
+
     def test_review_endpoint_approves_pending_submission(self):
         teacher = SimpleNamespace(id="teacher-1", user_type=UserType.TEACHER)
         client, self.app = make_client(

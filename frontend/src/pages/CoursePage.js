@@ -103,6 +103,7 @@ function createGroupEditor(group) {
     name: group.name || "",
     student_ids: [...(group.students || [])],
     schedule_slots: normalizeSlots(group.schedule_slots),
+    start_date: group.start_date || "",
     current_topic_id: group.current_topic_id || "",
   };
 }
@@ -141,6 +142,7 @@ function CoursePage() {
       public_info: response.course.public_info || "",
       accent_color: response.course.accent_color || "#16a085",
       cover_image: response.course.cover_image || "",
+      programming_language: response.course.programming_language || "python",
     });
     setOrderedLessons(response.lessons || []);
     setSelectedRatingGroupId((prev) => {
@@ -186,23 +188,25 @@ function CoursePage() {
     [ratingGroups, selectedRatingGroupId]
   );
 
+  const availableStudents = allStudents.length > 0 ? allStudents : students;
+
   const selectedEditorStudents = useMemo(() => {
     if (!groupEditor) return [];
     const ids = new Set(groupEditor.student_ids || []);
-    return allStudents.filter((student) => ids.has(student.user_id));
-  }, [allStudents, groupEditor]);
+    return availableStudents.filter((student) => ids.has(student.user_id));
+  }, [availableStudents, groupEditor]);
 
   const filteredStudentOptions = useMemo(() => {
     if (!groupEditor) return [];
     const query = studentSearch.trim().toLowerCase();
     const selectedIds = new Set(groupEditor.student_ids || []);
-    return allStudents.filter((student) => {
+    return availableStudents.filter((student) => {
       if (selectedIds.has(student.user_id)) return false;
       if (!query) return true;
       const haystack = `${student.name} ${student.surname} ${student.tg_username}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [allStudents, groupEditor, studentSearch]);
+  }, [availableStudents, groupEditor, studentSearch]);
 
   if (!authed) {
     return <Navigate to="/login" replace />;
@@ -336,6 +340,7 @@ function CoursePage() {
 
   const openGroupEditor = (group) => {
     setStudentSearch("");
+    setStudentPickerOpen(false);
     setGroupEditor(createGroupEditor(group));
     loadAllStudents();
   };
@@ -389,6 +394,8 @@ function CoursePage() {
       ...prev,
       student_ids: [...new Set([...(prev.student_ids || []), studentId])],
     }));
+    setStudentSearch("");
+    setStudentPickerOpen(false);
   };
 
   const removeStudentFromEditor = (studentId) => {
@@ -408,6 +415,7 @@ function CoursePage() {
           student_ids: groupEditor.student_ids || [],
           current_topic_id: groupEditor.current_topic_id || orderedLessons[0]?.id || null,
           schedule_slots: sanitizeScheduleSlots(groupEditor.schedule_slots),
+          start_date: groupEditor.start_date || null,
         });
         setNotice("Группа обновлена.");
         closeGroupEditor();
@@ -553,6 +561,21 @@ function CoursePage() {
                 </Field>
                 <FieldRow>
                   <Field>
+                    <Label>Язык курса</Label>
+                    <Select
+                      value={courseForm.programming_language}
+                      onChange={(event) =>
+                        setCourseForm((prev) => ({
+                          ...prev,
+                          programming_language: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="python">Python</option>
+                      <option value="javascript">JavaScript</option>
+                    </Select>
+                  </Field>
+                  <Field>
                     <Label>Цвет</Label>
                     <ColorInput
                       type="color"
@@ -610,6 +633,14 @@ function CoursePage() {
                 <Eyebrow>Курс</Eyebrow>
                 <HeroTitle>{course.name}</HeroTitle>
                 {course.description && <HeroText>{course.description}</HeroText>}
+                <MetaLine>
+                  <strong>Язык курса:</strong>{" "}
+                  <span>
+                    {course.programming_language === "javascript"
+                      ? "JavaScript"
+                      : "Python"}
+                  </span>
+                </MetaLine>
                 {course.active_group_name && (
                   <MetaLine>
                     <strong>Группа:</strong> <span>{course.active_group_name}</span>
@@ -682,6 +713,7 @@ function CoursePage() {
                     <div>
                       <GroupName>{group.name}</GroupName>
                       <GroupMeta>{group.schedule_summary || "Расписание не настроено"}</GroupMeta>
+                      {group.start_date && <GroupMeta>Старт группы: {group.start_date}</GroupMeta>}
                       <GroupMeta>{group.students.length} учеников · {visibleLessonsLabel(group)}</GroupMeta>
                     </div>
                     <GroupActions>
@@ -753,6 +785,9 @@ function CoursePage() {
                         <LessonBadges>
                           <Badge>{getLessonStatusLabel(lesson, index, isStudent)}</Badge>
                           <Badge>{lesson.total_tasks || 0} задач</Badge>
+                          {lesson.has_manual_review_tasks && (
+                            <Badge>Ручная проверка</Badge>
+                          )}
                           {!canEdit && <Badge>{Math.round(lesson.progress_percent || 0)}%</Badge>}
                         </LessonBadges>
                         <LessonDescription>
@@ -867,16 +902,54 @@ function CoursePage() {
                 </InlineButtons>
               </Field>
 
-              <Field>
+              <FieldBlock>
+                <Label>Дата начала занятий</Label>
+                <Input
+                  type="date"
+                  value={groupEditor.start_date || ""}
+                  onChange={(event) => updateGroupEditorField("start_date", event.target.value)}
+                />
+              </FieldBlock>
+
+              <FieldBlock>
                 <Label>Ученики</Label>
                 <InlineButtons>
                   <GhostButton type="button" onClick={async () => {
                     await loadAllStudents();
-                    setStudentPickerOpen(true);
+                    setStudentPickerOpen((prev) => !prev);
                   }}>
-                    Добавить ученика
+                    {studentPickerOpen ? "Скрыть поиск" : "Добавить ученика"}
                   </GhostButton>
                 </InlineButtons>
+                {studentPickerOpen && (
+                  <StudentPickerPanel>
+                    <Input
+                      autoFocus
+                      value={studentSearch}
+                      onChange={(event) => setStudentSearch(event.target.value)}
+                      placeholder="Найти ученика"
+                    />
+                    <SearchList>
+                      {studentsLoading ? (
+                        <EmptyState>Загрузка учеников...</EmptyState>
+                      ) : filteredStudentOptions.length === 0 ? (
+                        <EmptyState>Ничего не найдено.</EmptyState>
+                      ) : (
+                        filteredStudentOptions.map((student) => (
+                          <SearchRow key={student.user_id}>
+                            <div>
+                              <strong>{student.name} {student.surname}</strong>
+                              <small>@{student.tg_username}</small>
+                            </div>
+                            <GhostButton type="button" onClick={() => addStudentToEditor(student.user_id)}>
+                              Добавить
+                            </GhostButton>
+                          </SearchRow>
+                        ))
+                      )}
+                    </SearchList>
+                  </StudentPickerPanel>
+                )}
                 {selectedEditorStudents.length === 0 ? (
                   <EmptyState>В группе пока нет учеников.</EmptyState>
                 ) : (
@@ -884,12 +957,20 @@ function CoursePage() {
                     {selectedEditorStudents.map((student) => (
                       <StudentPill key={student.user_id}>
                         <span>{student.name} {student.surname}</span>
-                        <button type="button" onClick={() => removeStudentFromEditor(student.user_id)}>×</button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeStudentFromEditor(student.user_id);
+                          }}
+                        >
+                          ×
+                        </button>
                       </StudentPill>
                     ))}
                   </StudentPills>
                 )}
-              </Field>
+              </FieldBlock>
 
               <ActionRow>
                 <PrimaryButton type="button" onClick={handleSaveGroup} disabled={busyKey === `save-group-${groupEditor.id}`}>
@@ -900,39 +981,6 @@ function CoursePage() {
                 </DangerButton>
               </ActionRow>
             </ModalCard>
-          </Overlay>
-        )}
-
-        {studentPickerOpen && groupEditor && (
-          <Overlay>
-            <MiniModal>
-              <ModalHeader>
-                <div>
-                  <ModalTitle>Добавить ученика</ModalTitle>
-                </div>
-                <IconButton type="button" onClick={() => setStudentPickerOpen(false)}>×</IconButton>
-              </ModalHeader>
-              <Input value={studentSearch} onChange={(event) => setStudentSearch(event.target.value)} placeholder="Найти ученика" />
-              <SearchList>
-                {studentsLoading ? (
-                  <EmptyState>Загрузка учеников...</EmptyState>
-                ) : filteredStudentOptions.length === 0 ? (
-                  <EmptyState>Ничего не найдено.</EmptyState>
-                ) : (
-                  filteredStudentOptions.map((student) => (
-                    <SearchRow key={student.user_id}>
-                      <div>
-                        <strong>{student.name} {student.surname}</strong>
-                        <small>@{student.tg_username}</small>
-                      </div>
-                      <GhostButton type="button" onClick={() => addStudentToEditor(student.user_id)}>
-                        Добавить
-                      </GhostButton>
-                    </SearchRow>
-                  ))
-                )}
-              </SearchList>
-            </MiniModal>
           </Overlay>
         )}
 
@@ -1313,6 +1361,12 @@ const Field = styled.label`
   gap: 8px;
 `;
 
+const FieldBlock = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`;
+
 const FieldRow = styled.div`
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1429,6 +1483,16 @@ const StudentPills = styled.div`
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+`;
+
+const StudentPickerPanel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf2;
 `;
 
 const StudentPill = styled.div`
