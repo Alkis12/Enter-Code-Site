@@ -16,6 +16,7 @@ from schemas.responses import EventResponse, MessageResponse, ScheduledEventResp
 from services.auth_service import AuthService
 from services.learning_service import can_edit_course, get_courses_for_user, get_groups_for_course
 from services.serializer_service import build_group_schedule_summary
+from services.user_service import get_linked_students_for_parent
 
 
 router = APIRouter(prefix="/events", tags=["Events"])
@@ -98,14 +99,19 @@ def build_group_event_response(
     user_course_ids: set[str],
     user_type: Optional[UserType],
     current_user_id: Optional[str],
+    related_student_ids: set[str],
     slot_weekday: int,
     slot_start_time: str,
     slot_end_time: Optional[str],
 ) -> ScheduledEventResponse:
-    has_access = user_type == UserType.ADMIN or str(course.id) in user_course_ids
+    has_access = user_type == UserType.ADMIN or (
+        user_type in {UserType.STUDENT, UserType.TEACHER} and str(course.id) in user_course_ids
+    )
     is_user_related = has_access
     if user_type == UserType.STUDENT:
         is_user_related = current_user_id in group.students
+    if user_type == UserType.PARENT:
+        is_user_related = bool(related_student_ids.intersection(group.students))
 
     target_url = f"/mycourses/{course.id}" if has_access else f"/courses/{course.id}"
     summary = build_group_schedule_summary(group)
@@ -155,10 +161,18 @@ async def list_week_events(request: Request, date: Optional[str] = None) -> List
     user_course_ids: set[str] = set()
     user_type: Optional[UserType] = None
     current_user_id: Optional[str] = None
+    related_student_ids: set[str] = set()
     if current_user:
         user_type = current_user.user_type
         current_user_id = str(current_user.id)
         user_course_ids = {str(item.id) for item in await get_courses_for_user(current_user)}
+        if user_type == UserType.PARENT:
+            linked_students = await get_linked_students_for_parent(current_user)
+            related_student_ids = {str(student.id) for student in linked_students}
+            for student in linked_students:
+                user_course_ids.update(
+                    str(item.id) for item in await get_courses_for_user(student)
+                )
 
     scheduled: List[ScheduledEventResponse] = []
 
@@ -187,6 +201,8 @@ async def list_week_events(request: Request, date: Optional[str] = None) -> List
         if current_user and user_type == UserType.TEACHER and not await can_edit_course(current_user, course):
             continue
         for group in await get_groups_for_course(course):
+            if user_type == UserType.PARENT and not related_student_ids.intersection(group.students):
+                continue
             for slot in group.schedule_slots:
                 weekday = slot.weekday
                 if weekday < 0 or weekday > 6:
@@ -202,6 +218,7 @@ async def list_week_events(request: Request, date: Optional[str] = None) -> List
                         user_course_ids,
                         user_type,
                         current_user_id,
+                        related_student_ids,
                         weekday,
                         slot.start_time,
                         slot.end_time,

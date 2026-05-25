@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Upload
 from models.achievement import Achievement
 from models.course import Course
 from models.course_request import CourseRequest
+from models.group import Group
 from models.user import User, UserStatus, UserType
 from schemas.requests import (
     AdminCreateStudentRequest,
@@ -109,6 +110,30 @@ def ensure_accessible_course_ids(
     if invalid_ids:
         raise HTTPException(status_code=403, detail="Можно назначать ученика только на доступные вам курсы")
     return manageable_map
+
+
+async def ensure_accessible_course_group_ids(
+    course_ids: List[str],
+    course_group_ids: Dict[str, str] | None,
+    manageable_map: Dict[str, Course],
+) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    target_course_ids = {str(course_id) for course_id in course_ids}
+    for course_id, group_id in (course_group_ids or {}).items():
+        course_id = str(course_id)
+        group_id = str(group_id)
+        if not group_id:
+            continue
+        if course_id not in target_course_ids:
+            raise HTTPException(status_code=400, detail="Group selected for a course that is not assigned")
+        course = manageable_map.get(course_id)
+        if not course:
+            raise HTTPException(status_code=403, detail="Selected group is not available")
+        group = await Group.get(group_id)
+        if not group or group.course_id != course_id:
+            raise HTTPException(status_code=400, detail="Selected group does not belong to the course")
+        normalized[course_id] = group_id
+    return normalized
 
 
 async def ensure_can_manage_student(user: User, student: User, manageable_courses: List[Course]) -> None:
@@ -302,7 +327,7 @@ async def create_student(
 
     manageable_courses = await get_manageable_courses(user)
     allowed_course_ids = {str(course.id) for course in manageable_courses}
-    ensure_accessible_course_ids(user, payload.course_ids, manageable_courses)
+    manageable_map = ensure_accessible_course_ids(user, payload.course_ids, manageable_courses)
     if user.user_type == UserType.TEACHER and not payload.course_ids:
         raise HTTPException(
             status_code=400,
@@ -310,6 +335,11 @@ async def create_student(
         )
 
     auth_service = AuthService()
+    course_group_ids = await ensure_accessible_course_group_ids(
+        payload.course_ids,
+        payload.course_group_ids,
+        manageable_map,
+    )
     student = User(
         name=payload.name,
         surname=payload.surname,
@@ -323,7 +353,7 @@ async def create_student(
     await sync_student_course_memberships(
         str(student.id),
         payload.course_ids,
-        payload.course_group_ids,
+        course_group_ids,
     )
     return await serialize_student_entry(student, allowed_course_ids)
 
@@ -343,7 +373,12 @@ async def update_student(
     await ensure_can_manage_student(user, student, manageable_courses)
 
     if payload.course_ids is not None:
-        ensure_accessible_course_ids(user, payload.course_ids, manageable_courses)
+        manageable_map = ensure_accessible_course_ids(user, payload.course_ids, manageable_courses)
+        course_group_ids = await ensure_accessible_course_group_ids(
+            payload.course_ids,
+            payload.course_group_ids,
+            manageable_map,
+        )
 
     if payload.tg_username and payload.tg_username != student.tg_username:
         existing = await get_by_tg_username(payload.tg_username)
@@ -373,7 +408,7 @@ async def update_student(
         await sync_student_course_memberships(
             str(student.id),
             payload.course_ids,
-            payload.course_group_ids or {},
+            course_group_ids,
         )
 
     return await serialize_student_entry(student, allowed_course_ids)
