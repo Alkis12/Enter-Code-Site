@@ -12,6 +12,7 @@ function Header() {
   const authed = isAuthenticated();
   const userType = getCurrentUserType();
   const canOpenLearning = authed && ["student", "teacher", "admin"].includes(userType);
+  const canOpenSchedule = authed && ["student", "teacher", "admin", "parent"].includes(userType);
   const canManageStudents = userType === "teacher" || userType === "admin";
   const canManageAchievements = userType === "teacher" || userType === "admin";
   const canManageTeaching = userType === "teacher" || userType === "admin";
@@ -29,7 +30,7 @@ function Header() {
 
         <Nav>
           <NavItem to="/news">Новости</NavItem>
-          {canOpenLearning && <NavItem to="/myschedule">Мое расписание</NavItem>}
+          {canOpenSchedule && <NavItem to="/myschedule">Мое расписание</NavItem>}
           {canOpenLearning && <NavItem to="/mycourses">Мои курсы</NavItem>}
         </Nav>
 

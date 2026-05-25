@@ -146,14 +146,16 @@ class CreateTaskRequest(BaseModel):
     attachments: List[str] = Field(default_factory=list)
     points: int = Field(default=10, ge=0)
     starter_code: str = Field(default="")
-    language: str = Field(default=ProgrammingLanguage.PYTHON.value, max_length=20)
+    language: Optional[str] = Field(default=None, max_length=20)
     requires_manual_review: bool = Field(default=False)
     tests: List[TaskTestCaseRequest] = Field(default_factory=list)
     order: int = Field(default=0, ge=0)
 
     @field_validator("language")
     @classmethod
-    def normalize_language_field(cls, value: str) -> str:
+    def normalize_language_field(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
         return normalize_programming_language(value).value
 
 

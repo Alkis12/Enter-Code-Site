@@ -147,7 +147,7 @@ function App() {
         <Route
           path="/myschedule"
           element={
-            <RequireRoles roles={["student", "teacher", "admin"]}>
+            <RequireRoles roles={["student", "teacher", "admin", "parent"]}>
               <MySchedulePage />
             </RequireRoles>
           }

@@ -331,7 +331,7 @@ async def update_course_group(
         group.schedule_slots = payload.schedule_slots
     if "start_date" in payload.model_fields_set:
         group.start_date = payload.start_date or None
-    if payload.current_topic_id is not None:
+    if "current_topic_id" in payload.model_fields_set:
         group.current_topic_id = payload.current_topic_id or None
     if payload.student_ids is not None:
         await group.save()

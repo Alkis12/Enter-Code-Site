@@ -197,6 +197,25 @@ async def delete_task(
     await task.delete()
     return MessageResponse(message="Задача удалена", success=True)
 
+@router.get("/topic/{topic_id}", response_model=List[TaskResponse])
+async def tasks_for_topic(
+    topic_id: str,
+    user: User = Depends(get_current_user_dependency),
+):
+    topic = await Topic.get(topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Урок не найден")
+    course = await Course.get(topic.course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+    user_courses = {str(item.id) for item in await get_courses_for_user(user)}
+    if user.user_type != UserType.ADMIN and str(course.id) not in user_courses:
+        raise HTTPException(status_code=403, detail="Нет доступа к задачам урока")
+    editable = await can_edit_course(user, course)
+    await ensure_topic_access(user, topic, editable)
+    tasks = await Task.find(Task.topic_id == topic_id).to_list()
+    tasks.sort(key=lambda item: item.order)
+    return [await serialize_task(task, user, can_edit=editable) for task in tasks]
 
 @router.get("/{task_id}", response_model=TaskResponse)
 async def task_detail(
@@ -394,24 +413,3 @@ async def review_task_submission(
         serialize_achievement_notice(item) for item in newly_unlocked
     ]
     return response
-
-
-@router.get("/topic/{topic_id}", response_model=List[TaskResponse])
-async def tasks_for_topic(
-    topic_id: str,
-    user: User = Depends(get_current_user_dependency),
-):
-    topic = await Topic.get(topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Урок не найден")
-    course = await Course.get(topic.course_id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Курс не найден")
-    user_courses = {str(item.id) for item in await get_courses_for_user(user)}
-    if user.user_type != UserType.ADMIN and str(course.id) not in user_courses:
-        raise HTTPException(status_code=403, detail="Нет доступа к задачам урока")
-    editable = await can_edit_course(user, course)
-    await ensure_topic_access(user, topic, editable)
-    tasks = await Task.find(Task.topic_id == topic_id).to_list()
-    tasks.sort(key=lambda item: item.order)
-    return [await serialize_task(task, user, can_edit=editable) for task in tasks]
